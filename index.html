@@ -140,12 +140,20 @@ function billingPanelHTML(d, pid) {
 
 function deliverableHTML(d, pid) {
   const cur = getProject(pid).currency;
+  const statusOpts = ["Not started","In progress","Done"];
+  const statusColor = {"Not started":"#7a8c7a","In progress":"#185fa5","Done":"#3a6b3a"};
+  const statusBg =    {"Not started":"#e8ede8","In progress":"#d8eaf5","Done":"#ddf0dd"};
+  const st = d.status || "Not started";
   return `<div class="dl-item" id="dli_${d.id}">
     <div class="dl-row ${d.done?"done":"pending"}">
       <input type="checkbox" ${d.done?"checked":""} onclick="window.toggleDone('${pid}','${d.id}',this.checked)">
       <input type="text" value="${esc(d.name)}" placeholder="Deliverable name"
         style="flex:1;font-size:12px;background:transparent;border:none;border-bottom:0.5px dashed #c0d4c0;border-radius:0;padding:2px 4px;color:${d.done?"#7a8c7a":"#2c3c2c"};text-decoration:${d.done?"line-through":"none"}"
         onchange="window.setDelName('${pid}','${d.id}',this.value)">
+      <select onchange="window.setDelStatus('${pid}','${d.id}',this.value)"
+        style="font-size:11px;padding:2px 6px;border-radius:20px;border:none;font-weight:500;background:${statusBg[st]};color:${statusColor[st]};cursor:pointer">
+        ${statusOpts.map(o=>`<option value="${o}" ${o===st?"selected":""}>${o}</option>`).join("")}
+      </select>
       <input type="number" value="${d.amount||""}" placeholder="Amount"
         style="width:90px;font-size:11px;text-align:right"
         onchange="window.setDelAmount('${pid}','${d.id}',this.value)">
@@ -242,6 +250,7 @@ window.toggleBilling = (pid,did) => { const p=getProject(pid); const d=p.deliver
 window.setBilling    = (pid,did,f,v) => updateProject(pid,p=>{ p.deliverables.find(d=>d.id===did).billing[f]=v; });
 window.setDelAmount = (pid,did,v) => updateProject(pid,p=>{ p.deliverables.find(d=>d.id===did).amount=v; });
 window.setDelName   = (pid,did,v) => updateProject(pid,p=>{ p.deliverables.find(d=>d.id===did).name=v; });
+window.setDelStatus = (pid,did,v) => updateProject(pid,p=>{ p.deliverables.find(d=>d.id===did).status=v; });
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 window.handleUpload = async (pid, input) => {
