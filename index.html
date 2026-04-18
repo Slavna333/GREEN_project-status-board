@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Status Board — GREEN Engineering</title>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f4f0; color: #2c3c2c; padding: 24px; }
+  h1 { font-size: 17px; font-weight: 500; }
+  .subtitle { font-size: 12px; color: #7a8c7a; margin-top: 3px; }
+  .top-bar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  .rag-summary { display: flex; gap: 8px; }
+  .rag-chip { display: flex; align-items: center; gap: 5px; border-radius: 20px; padding: 4px 10px; font-size: 12px; font-weight: 500; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .card { background: #f7f9f7; border: 0.5px solid #d8e8d8; border-radius: 14px; overflow: hidden; }
+  .card-header { background: #eef5ee; padding: 12px 16px; border-bottom: 0.5px solid #d8e8d8; }
+  .card-header-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .card-body { padding: 12px 16px; }
+  input[type=text], input[type=number], input[type=date], select {
+    font-family: inherit; font-size: 13px; color: #2c3c2c;
+    background: #eff5ef; border: 0.5px solid #d8e8d8; border-radius: 6px; padding: 3px 8px;
+    outline: none; transition: border-color .15s;
+  }
+  input[type=text]:focus, input[type=number]:focus, input[type=date]:focus, select:focus { border-color: #6aaa6a; }
+  .name-input { font-size: 15px; font-weight: 500; background: none; border: none; outline: none; width: 100%; padding: 0; color: #2c3c2c; }
+  .client-input { font-size: 12px; background: none; border: none; outline: none; width: 100%; padding: 0; color: #7a8c7a; margin-top: 2px; }
+  .rag-btn { display: flex; align-items: center; gap: 6px; border: none; border-radius: 20px; padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 500; }
+  .rag-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .del-btn { border: none; background: none; cursor: pointer; color: #b0c0b0; font-size: 18px; line-height: 1; padding: 0; }
+  .section-label { font-size: 10px; color: #7a8c7a; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-bottom: 6px; }
+  /* Finance block */
+  .finance-block { margin-bottom: 14px; padding: 10px 12px; background: #eef5ee; border-radius: 10px; border: 0.5px solid #d8e8d8; }
+  .finance-header { display: flex; justify-content: space-between; margin-bottom: 8px; align-items: center; }
+  .prog-bar { height: 10px; background: #dceadc; border-radius: 6px; overflow: hidden; display: flex; margin-bottom: 6px; }
+  .prog-paid { background: #3a6b3a; height: 100%; transition: width .3s; }
+  .prog-ar { background: #c8a030; height: 100%; transition: width .3s; }
+  .finance-legend { display: flex; gap: 12px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #2c3c2c; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+  /* Deliverables */
+  .dl-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .dl-prog { height: 5px; background: #dceadc; border-radius: 4px; margin-bottom: 10px; overflow: hidden; }
+  .dl-prog-fill { height: 100%; background: #6aaa6a; border-radius: 4px; transition: width .3s; }
+  .dl-item { border: 0.5px solid #d8e8d8; border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+  .dl-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; }
+  .dl-row.done { background: #eaf4ea; }
+  .dl-row.pending { background: #f7f9f7; cursor: default; }
+  .dl-name { flex: 1; font-size: 12px; line-height: 1.4; }
+  .dl-amount { font-size: 11px; color: #7a8c7a; white-space: nowrap; }
+  .dl-icon { font-size: 11px; }
+  .dl-chevron { font-size: 12px; color: #7a8c7a; }
+  .billing-panel { padding: 0 10px 10px; display: none; }
+  .billing-panel.open { display: block; }
+  .billing-inner { margin-top: 8px; padding: 10px 12px; background: #f0f6f0; border: 0.5px solid #d8e8d8; border-radius: 10px; }
+  .billing-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #2c3c2c; flex-wrap: wrap; }
+  .billing-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  input[type=checkbox] { accent-color: #6aaa6a; cursor: pointer; width: 14px; height: 14px; }
+  .days-chip { font-size: 11px; font-weight: 500; border-radius: 20px; padding: 2px 8px; margin-left: 4px; }
+  .billing-hint { font-size: 11px; margin-left: 22px; font-style: italic; }
+  .paid-badge { font-size: 11px; background: #ddf0dd; color: #2a622a; border-radius: 20px; padding: 1px 8px; margin-left: 4px; }
+  /* Buttons */
+  .add-dl-btn { font-size: 12px; color: #7a8c7a; background: none; border: 0.5px dashed #c0d4c0; border-radius: 6px; padding: 4px 12px; cursor: pointer; margin-top: 4px; }
+  .upload-btn { font-size: 12px; color: #7a8c7a; background: #f7f9f7; border: 0.5px solid #d8e8d8; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  .upload-area { margin-top: 10px; padding-top: 10px; border-top: 0.5px dashed #c0d4c0; }
+  .export-area { display: flex; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 0.5px dashed #c0d4c0; align-items: center; }
+  .export-label { font-size: 11px; color: #7a8c7a; }
+  .export-btn { font-size: 12px; font-weight: 500; background: none; border-radius: 6px; padding: 5px 14px; cursor: pointer; }
+  .btn-pdf { color: #3a6b3a; border: 0.5px solid #3a6b3a; }
+  .btn-pptx { color: #185fa5; border: 0.5px solid #185fa5; }
+  .add-card-btn { border: 0.5px dashed #c0d4c0; border-radius: 14px; background: #f7f9f7; cursor: pointer; color: #b0c0b0; font-size: 14px; padding: 2rem; min-height: 120px; width: 100%; }
+  .footer { margin-top: 14px; font-size: 11px; color: #b0c0b0; text-align: right; }
+  /* API key bar */
+  .api-bar { background: #fff8e8; border: 0.5px solid #e8d8a0; border-radius: 10px; padding: 10px 16px; margin-bottom: 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .api-bar label { font-size: 12px; color: #7a6020; font-weight: 500; }
+  .api-bar input { flex: 1; min-width: 200px; font-family: monospace; font-size: 12px; }
+  .api-bar .save-btn { font-size: 12px; color: #fff; background: #c8a030; border: none; border-radius: 6px; padding: 4px 14px; cursor: pointer; }
+  .api-ok { font-size: 11px; color: #3a6b3a; }
+  .err { font-size: 11px; color: #7a3030; margin-top: 4px; }
+  .empty-note { font-size: 12px; color: #b0c0b0; font-style: italic; padding: 4px 0; }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div>
+    <h1>Project status board</h1>
+    <div class="subtitle">GREEN Engineering KZ — weekly standup</div>
+  </div>
+  <div class="rag-summary" id="ragSummary"></div>
+</div>
+
+<div class="api-bar">
+  <label for="apiKey">Anthropic API key (for PDF parsing):</label>
+  <input type="password" id="apiKey" placeholder="sk-ant-..." />
+  <button class="save-btn" onclick="saveKey()">Save</button>
+  <span class="api-ok" id="apiOk" style="display:none">✓ Saved</span>
+</div>
+
+<div class="grid" id="grid"></div>
+<div class="footer">Saved to browser · Tick deliverable to unlock billing · Click RAG badge to change status</div>
+
+<script>
+const STORAGE = "green_psb_html_v1";
+const RAG = {
+  green: { bg:"#e4f0e4", text:"#3a6b3a", dot:"#6aaa6a", label:"On track" },
+  yellow:{ bg:"#f5f0e4", text:"#7a6020", dot:"#c8a030", label:"At risk" },
+  red:   { bg:"#f5e8e8", text:"#7a3030", dot:"#c86060", label:"Issues" }
+};
+const CURRENCIES = ["USD","EUR","KZT","MNT","GBP"];
+
+function fmt(n) { return n == null || n === "" ? "" : Number(n).toLocaleString("en-US"); }
+function num(v) { return parseFloat(v) || 0; }
+function daysSince(d) { if (!d) return null; return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
+function uid() { return Date.now() + "_" + Math.random().toString(36).slice(2); }
+function emptyBilling() { return { invoiceReady:false, invoiceSent:false, sentDate:"", clientFeedback:false, paid:false }; }
+function emptyDel(name="") { return { id:uid(), name, done:false, amount:"", billing:emptyBilling() }; }
+function emptyProject() { return { id:uid(), name:"", client:"", rag:"green", contractValue:"", currency:"USD", deliverables:[] }; }
+
+function saveKey() {
+  const k = document.getElementById("apiKey").value.trim();
+  if (k) { localStorage.setItem("green_api_key", k); document.getElementById("apiOk").style.display="inline"; }
+}
+function getKey() { return localStorage.getItem("green_api_key") || ""; }
+
+// Load / save
+let projects = [];
+function load() {
+  try { const s = localStorage.getItem(STORAGE); if (s) projects = JSON.parse(s); } catch(e){}
+  if (!projects.length) projects = [emptyProject()];
+}
+function save() { localStorage.setItem(STORAGE, JSON.stringify(projects)); }
+function getProject(id) { return projects.find(p => p.id === id); }
+function updateProject(id, fn) { const p = getProject(id); fn(p); save(); renderAll(); }
+
+// ── Finances ──────────────────────────────────────────────────────────────────
+function calcFin(p) {
+  const cv = num(p.contractValue);
+  const paid = p.deliverables.filter(d=>d.billing?.paid).reduce((s,d)=>s+num(d.amount),0);
+  const ar   = p.deliverables.filter(d=>d.billing?.invoiceSent&&!d.billing?.paid).reduce((s,d)=>s+num(d.amount),0);
+  const remaining = Math.max(0, cv-paid);
+  const paidPct = cv ? Math.min(100, Math.round(paid/cv*100)) : 0;
+  const arPctC  = cv ? Math.min(100-paidPct, Math.round(ar/cv*100)) : 0;
+  const arPctR  = remaining>0 ? Math.round(ar/remaining*100) : 0;
+  return {cv,paid,ar,remaining,paidPct,arPctC,arPctR};
+}
+
+function financeHTML(p) {
+  const {cv,paid,ar,remaining,paidPct,arPctC,arPctR} = calcFin(p);
+  if (!cv) return "";
+  return `<div class="finance-block">
+    <div class="finance-header">
+      <span class="section-label" style="margin:0">Contract finances</span>
+      <span style="font-size:11px;font-weight:600;color:#2c3c2c">${p.currency} ${fmt(cv)}</span>
+    </div>
+    <div class="prog-bar">
+      <div class="prog-paid" style="width:${paidPct}%"></div>
+      <div class="prog-ar"   style="width:${arPctC}%"></div>
+    </div>
+    <div class="finance-legend">
+      <div class="legend-item"><span class="legend-dot" style="background:#3a6b3a"></span><b>${paidPct}%</b>&nbsp;paid — ${p.currency} ${fmt(paid)}</div>
+      ${ar>0?`<div class="legend-item"><span class="legend-dot" style="background:#c8a030"></span>AR: <b>${p.currency} ${fmt(ar)}</b> — ${arPctC}% of contract · ${arPctR}% of outstanding</div>`:""}
+      <div class="legend-item"><span class="legend-dot" style="background:#dceadc;border:0.5px solid #d8e8d8"></span>Outstanding: ${p.currency} ${fmt(remaining)}</div>
+    </div>
+  </div>`;
+}
+
+// ── Deliverable row ───────────────────────────────────────────────────────────
+function billingIcon(d) {
+  if (!d.done) return "";
+  if (d.billing.paid) return "💰";
+  if (d.billing.invoiceSent) return "📤";
+  if (d.billing.invoiceReady) return "📋";
+  return "";
+}
+
+function billingPanelHTML(d, pid) {
+  const b = d.billing; const days = daysSince(b.sentDate);
+  const chipStyle = days===null?"":days>30?"background:#f5e8e8;color:#7a3030":days>14?"background:#f5f0e4;color:#7a6020":"background:#e4f0e4;color:#3a6b3a";
+  const hint = days===null?"":days>30?"Overdue — consider penalties":days>14?"Consider sending a reminder":"Within payment window";
+  const hintColor = days>30?"#7a3030":days>14?"#7a6020":"#7a8c7a";
+  return `<div class="billing-panel${d._open?" open":""}" id="bp_${d.id}">
+    <div class="billing-inner">
+      <div style="font-size:10px;color:#7a8c7a;text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:8px">Billing</div>
+      <div class="billing-row" style="margin-bottom:8px">
+        <span style="font-size:12px;color:#7a8c7a;white-space:nowrap">Amount (${getProject(pid).currency})</span>
+        <input type="number" style="width:120px" value="${d.amount||""}" placeholder="0"
+          onchange="setDelAmount('${pid}','${d.id}',this.value)">
+      </div>
+      <div class="billing-row"><label><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label></div>
+      <div class="billing-row">
+        <label><input type="checkbox" ${b.invoiceSent?"checked":""} onchange="setBilling('${pid}','${d.id}','invoiceSent',this.checked)"> Invoice sent</label>
+        ${b.invoiceSent?`<input type="date" value="${b.sentDate||""}" onchange="setBilling('${pid}','${d.id}','sentDate',this.value)">
+          ${b.sentDate?`<span class="days-chip" style="${chipStyle}">${days}d</span>`:""}`:""}</div>
+      ${b.invoiceSent&&b.sentDate?`<div class="billing-hint" style="color:${hintColor}">${hint}</div>`:""}
+      <div class="billing-row"><label><input type="checkbox" ${b.clientFeedback?"checked":""} onchange="setBilling('${pid}','${d.id}','clientFeedback',this.checked)"> Client acknowledged</label></div>
+      <div class="billing-row"><label><input type="checkbox" ${b.paid?"checked":""} onchange="setBilling('${pid}','${d.id}','paid',this.checked)">
+        <span style="font-weight:${b.paid?600:400};color:${b.paid?"#3a6b3a":"#2c3c2c"}">Payment received</span></label>
+        ${b.paid?`<span class="paid-badge">Paid</span>`:""}
+      </div>
+    </div>
+  </div>`;
+}
+
+function deliverableHTML(d, pid) {
+  const cur = getProject(pid).currency;
+  return `<div class="dl-item" id="dli_${d.id}">
+    <div class="dl-row ${d.done?"done":"pending"}" onclick="toggleBilling('${pid}','${d.id}')">
+      <input type="checkbox" ${d.done?"checked":""} onclick="event.stopPropagation();toggleDone('${pid}','${d.id}',this.checked)">
+      <span class="dl-name" style="color:${d.done?"#7a8c7a":"#2c3c2c"};text-decoration:${d.done?"line-through":"none"}">${d.name||"<em style='color:#b0c0b0'>Unnamed</em>"}</span>
+      ${d.amount?`<span class="dl-amount">${cur} ${fmt(d.amount)}</span>`:""}
+      <span class="dl-icon">${billingIcon(d)}</span>
+      ${d.done?`<span class="dl-chevron">${d._open?"▲":"▼"}</span>`:""}
+      <button class="del-btn" onclick="event.stopPropagation();removeDel('${pid}','${d.id}')">×</button>
+    </div>
+    ${d.done?billingPanelHTML(d,pid):""}
+  </div>`;
+}
+
+function deliverablesHTML(p) {
+  const done = p.deliverables.filter(d=>d.done).length;
+  const paid = p.deliverables.filter(d=>d.billing?.paid).length;
+  const pct  = p.deliverables.length ? Math.round(done/p.deliverables.length*100) : 0;
+  return `<div>
+    <div class="dl-header">
+      <span class="section-label" style="margin:0">Deliverables</span>
+      ${p.deliverables.length?`<span style="font-size:11px;color:#7a8c7a">${done}/${p.deliverables.length} done · ${paid} paid</span>`:""}
+    </div>
+    ${p.deliverables.length?`<div class="dl-prog"><div class="dl-prog-fill" style="width:${pct}%"></div></div>`:""}
+    <div id="dllist_${p.id}">${p.deliverables.map(d=>deliverableHTML(d,p.id)).join("")||`<div class="empty-note">No deliverables yet</div>`}</div>
+    <button class="add-dl-btn" onclick="addDel('${p.id}')">+ Add deliverable</button>
+  </div>`;
+}
+
+// ── Card ─────────────────────────────────────────────────────────────────────
+function cardHTML(p) {
+  const r = RAG[p.rag];
+  return `<div class="card" id="card_${p.id}">
+    <div class="card-header">
+      <div class="card-header-top">
+        <div style="flex:1;margin-right:10px">
+          <input class="name-input" placeholder="Project name" value="${esc(p.name)}" onchange="setField('${p.id}','name',this.value)">
+          <input class="client-input" placeholder="Client / funder" value="${esc(p.client)}" onchange="setField('${p.id}','client',this.value)">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="rag-btn" style="background:${r.bg};color:${r.text}" onclick="cycleRag('${p.id}')">
+            <span class="rag-dot" style="background:${r.dot}"></span>${r.label}
+          </button>
+          <button class="del-btn" onclick="removeProject('${p.id}')">×</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:#7a8c7a">Contract value:</span>
+        <select onchange="setField('${p.id}','currency',this.value)" style="font-size:12px;padding:2px 4px">
+          ${CURRENCIES.map(c=>`<option ${c===p.currency?"selected":""}>${c}</option>`).join("")}
+        </select>
+        <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:140px"
+          onchange="setField('${p.id}','contractValue',this.value)">
+      </div>
+    </div>
+    <div class="card-body">
+      ${financeHTML(p)}
+      ${deliverablesHTML(p)}
+      <div class="upload-area">
+        <input type="file" accept=".txt,.pdf" id="fu_${p.id}" style="display:none" onchange="handleUpload('${p.id}',this)">
+        <button class="upload-btn" onclick="document.getElementById('fu_${p.id}').click()">Upload deliverables (TXT or PDF) ↗</button>
+        <div class="err" id="uerr_${p.id}"></div>
+      </div>
+      <div class="export-area">
+        <span class="export-label">Export:</span>
+        <button class="export-btn btn-pdf" onclick="exportPDF('${p.id}')">PDF</button>
+        <button class="export-btn btn-pptx" onclick="exportPPTX('${p.id}')">PPTX</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function esc(s) { return (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderAll() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = projects.map(cardHTML).join("") +
+    `<button class="add-card-btn" onclick="addProject()">+ Add project</button>`;
+  // RAG summary
+  const sum = {green:0,yellow:0,red:0};
+  projects.forEach(p=>sum[p.rag]++);
+  document.getElementById("ragSummary").innerHTML = ["green","yellow","red"].map(k=>{
+    const r=RAG[k];
+    return `<div class="rag-chip" style="background:${r.bg};color:${r.text}">
+      <span class="rag-dot" style="background:${r.dot}"></span>${sum[k]}</div>`;
+  }).join("");
+  // restore API key hint
+  if (getKey()) document.getElementById("apiOk").style.display="inline";
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function setField(pid,f,v){ updateProject(pid,p=>p[f]=v); }
+function cycleRag(pid){ const o=["green","yellow","red"]; updateProject(pid,p=>p.rag=o[(o.indexOf(p.rag)+1)%3]); }
+function addProject(){ projects.push(emptyProject()); save(); renderAll(); }
+function removeProject(pid){ projects=projects.filter(p=>p.id!==pid); save(); renderAll(); }
+function addDel(pid){ updateProject(pid,p=>p.deliverables.push(emptyDel())); }
+function removeDel(pid,did){ updateProject(pid,p=>p.deliverables=p.deliverables.filter(d=>d.id!==did)); }
+function toggleDone(pid,did,val){
+  updateProject(pid,p=>{
+    const d=p.deliverables.find(d=>d.id===did);
+    d.done=val; if(val) d._open=true;
+  });
+}
+function toggleBilling(pid,did){
+  const p=getProject(pid); const d=p.deliverables.find(d=>d.id===did);
+  if(!d.done) return;
+  d._open=!d._open; save(); renderAll();
+}
+function setBilling(pid,did,field,val){
+  updateProject(pid,p=>{ const d=p.deliverables.find(d=>d.id===did); d.billing[field]=val; });
+}
+function setDelAmount(pid,did,val){
+  updateProject(pid,p=>{ const d=p.deliverables.find(d=>d.id===did); d.amount=val; });
+}
+
+// ── Upload & AI parse ─────────────────────────────────────────────────────────
+async function handleUpload(pid, input) {
+  const file = input.files[0]; if(!file) return;
+  const errEl = document.getElementById("uerr_"+pid);
+  errEl.textContent = "Parsing…";
+  const key = getKey();
+  if(!key){ errEl.textContent="No API key — enter it above."; return; }
+  try {
+    let messages;
+    if(file.name.endsWith(".pdf")){
+      const buf = await file.arrayBuffer();
+      let s=""; new Uint8Array(buf).forEach(b=>s+=String.fromCharCode(b));
+      const b64 = btoa(s);
+      messages=[{role:"user",content:[{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},{type:"text",text:'List all deliverables or outputs. Return ONLY a JSON array of strings. E.g. ["Report 1","Training"]'}]}];
+    } else {
+      const text = await file.text();
+      messages=[{role:"user",content:`List all deliverables or outputs. Return ONLY a JSON array of strings, no markdown.\n\n${text.slice(0,4000)}`}];
+    }
+    const res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages})
+    });
+    const data = await res.json();
+    if(data.error){ errEl.textContent="API error: "+data.error.message; return; }
+    const raw = data.content.map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
+    const parsed = JSON.parse(raw);
+    updateProject(pid,p=>{ parsed.forEach(name=>p.deliverables.push(emptyDel(name))); });
+    errEl.textContent="";
+  } catch(e){ errEl.textContent="Error: "+e.message; }
+  input.value="";
+}
+
+// ── Export PDF ────────────────────────────────────────────────────────────────
+function exportPDF(pid){
+  const p=getProject(pid);
+  const {cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);
+  const r=RAG[p.rag];
+  const rows=p.deliverables.map(d=>{
+    const b=d.billing; const days=daysSince(b.sentDate);
+    const bStatus=b.paid?"Paid":b.invoiceSent?`Sent${b.sentDate?" ("+daysSince(b.sentDate)+"d)":""}`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+    const bColor=b.paid?"#3a6b3a":b.invoiceSent?"#7a6020":"#7a8c7a";
+    return `<tr style="border-bottom:0.5px solid #d8e8d8">
+      <td style="padding:6px 8px;font-size:12px;color:${d.done?"#7a8c7a":"#2c3c2c"};text-decoration:${d.done?"line-through":"none"}">${d.name||"—"}</td>
+      <td style="padding:6px 8px;font-size:12px;text-align:center;color:${d.done?"#3a6b3a":"#b0c0b0"}">${d.done?"✓":"○"}</td>
+      <td style="padding:6px 8px;font-size:12px;color:#7a8c7a">${d.amount?p.currency+" "+fmt(d.amount):"—"}</td>
+      <td style="padding:6px 8px;font-size:12px;color:${bColor}">${bStatus}</td>
+    </tr>`;
+  }).join("");
+  const finBlock=cv?`<div style="margin-bottom:20px;padding:12px;background:#eef5ee;border-radius:8px;border:1px solid #d8e8d8">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="font-size:10px;color:#7a8c7a;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Contract finances</span>
+      <span style="font-size:12px;font-weight:600">${p.currency} ${fmt(cv)}</span>
+    </div>
+    <div style="height:10px;background:#dceadc;border-radius:6px;overflow:hidden;display:flex;margin-bottom:8px">
+      <div style="width:${paidPct}%;background:#3a6b3a"></div>
+      <div style="width:${arPctC}%;background:#c8a030"></div>
+    </div>
+    <div style="font-size:11px;color:#2c3c2c;display:flex;flex-direction:column;gap:3px">
+      <span><b>${paidPct}% paid</b> — ${p.currency} ${fmt(paid)}</span>
+      ${ar>0?`<span>AR: <b>${p.currency} ${fmt(ar)}</b> — ${arPctC}% of contract · ${arPctR}% of outstanding</span>`:""}
+      <span>Outstanding: ${p.currency} ${fmt(remaining)}</span>
+    </div>
+  </div>`:"";
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${p.name}</title>
+  <style>body{font-family:sans-serif;margin:0;padding:32px;color:#2c3c2c}@media print{body{padding:20px}}</style></head><body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #d8e8d8">
+    <div><div style="font-size:20px;font-weight:600">${p.name||"Project"}</div>
+    <div style="font-size:13px;color:#7a8c7a;margin-top:4px">${p.client||""}</div></div>
+    <div style="background:${r.bg};color:${r.text};font-size:12px;font-weight:600;padding:5px 14px;border-radius:20px">${r.label}</div>
+  </div>
+  ${finBlock}
+  <div style="font-size:10px;color:#7a8c7a;text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:8px">Deliverables</div>
+  <table style="width:100%;border-collapse:collapse;border:0.5px solid #d8e8d8">
+    <thead><tr style="background:#eef5ee">
+      <th style="padding:6px 8px;font-size:11px;color:#7a8c7a;text-align:left">Deliverable</th>
+      <th style="padding:6px 8px;font-size:11px;color:#7a8c7a;text-align:center">Done</th>
+      <th style="padding:6px 8px;font-size:11px;color:#7a8c7a;text-align:left">Amount</th>
+      <th style="padding:6px 8px;font-size:11px;color:#7a8c7a;text-align:left">Billing</th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="4" style="padding:12px;font-size:12px;color:#b0c0b0;font-style:italic">No deliverables</td></tr>'}</tbody>
+  </table>
+  <div style="margin-top:20px;font-size:10px;color:#b0c0b0;text-align:right">GREEN Engineering KZ · ${new Date().toLocaleDateString("en-GB")}</div>
+  </body></html>`;
+  const w=window.open("","_blank"); w.document.write(html); w.document.close(); w.focus(); setTimeout(()=>w.print(),400);
+}
+
+// ── Export PPTX ───────────────────────────────────────────────────────────────
+function exportPPTX(pid){
+  const p=getProject(pid);
+  const {cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);
+  const r=RAG[p.rag];
+  const ragHex=r.text.replace("#",""); const ragBgHex=r.bg.replace("#","");
+  const prs=new PptxGenJS(); prs.layout="LAYOUT_WIDE";
+  const slide=prs.addSlide(); slide.background={color:"f7f9f7"};
+  slide.addShape(prs.ShapeType.rect,{x:0,y:0,w:"100%",h:1.1,fill:{color:"eef5ee"}});
+  slide.addText(p.name||"Project",{x:0.4,y:0.15,w:7,h:0.5,fontSize:22,bold:true,color:"2c3c2c"});
+  slide.addText(p.client||"",{x:0.4,y:0.65,w:7,h:0.3,fontSize:12,color:"7a8c7a"});
+  slide.addShape(prs.ShapeType.roundRect,{x:8.4,y:0.25,w:1.4,h:0.4,rectRadius:0.2,fill:{color:ragBgHex}});
+  slide.addText(r.label,{x:8.4,y:0.25,w:1.4,h:0.4,fontSize:11,bold:true,color:ragHex,align:"center",valign:"middle"});
+  let yOff=1.3;
+  if(cv){
+    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:9.4,h:1.5,fill:{color:"eef5ee"},line:{color:"d8e8d8",pt:0.5}});
+    slide.addText("CONTRACT FINANCES",{x:0.6,y:yOff+0.1,w:5,h:0.25,fontSize:8,bold:true,color:"7a8c7a",charSpacing:1});
+    slide.addText(`${p.currency} ${fmt(cv)}`,{x:6.5,y:yOff+0.1,w:3,h:0.25,fontSize:11,bold:true,color:"2c3c2c",align:"right"});
+    slide.addShape(prs.ShapeType.rect,{x:0.6,y:yOff+0.45,w:9.0,h:0.18,fill:{color:"dceadc"}});
+    if(paidPct>0) slide.addShape(prs.ShapeType.rect,{x:0.6,y:yOff+0.45,w:9.0*paidPct/100,h:0.18,fill:{color:"3a6b3a"}});
+    if(arPctC>0)  slide.addShape(prs.ShapeType.rect,{x:0.6+9.0*paidPct/100,y:yOff+0.45,w:9.0*arPctC/100,h:0.18,fill:{color:"c8a030"}});
+    const finLines=[`${paidPct}% paid — ${p.currency} ${fmt(paid)}`,ar>0?`AR: ${p.currency} ${fmt(ar)} — ${arPctC}% of contract · ${arPctR}% of outstanding`:null,`Outstanding: ${p.currency} ${fmt(remaining)}`].filter(Boolean).join("     ");
+    slide.addText(finLines,{x:0.6,y:yOff+0.72,w:9.0,h:0.5,fontSize:9,color:"2c3c2c",wrap:true});
+    yOff+=1.7;
+  }
+  slide.addText("DELIVERABLES",{x:0.4,y:yOff,w:9.4,h:0.25,fontSize:8,bold:true,color:"7a8c7a",charSpacing:1}); yOff+=0.3;
+  const rows=[
+    [{text:"Deliverable",options:{bold:true,color:"7a8c7a"}},{text:"Done",options:{bold:true,color:"7a8c7a",align:"center"}},{text:"Amount",options:{bold:true,color:"7a8c7a"}},{text:"Billing status",options:{bold:true,color:"7a8c7a"}}],
+    ...p.deliverables.map(d=>{
+      const b=d.billing;
+      const bStatus=b.paid?"Paid":b.invoiceSent?`Sent (${daysSince(b.sentDate)??"?"}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+      const bColor=b.paid?"3a6b3a":b.invoiceSent?"7a6020":"7a8c7a";
+      return [{text:d.name,options:{color:d.done?"7a8c7a":"2c3c2c",strike:d.done}},{text:d.done?"✓":"○",options:{align:"center",color:d.done?"3a6b3a":"b0c0b0"}},{text:d.amount?`${p.currency} ${fmt(d.amount)}`:"—",options:{color:"7a8c7a"}},{text:bStatus,options:{color:bColor}}];
+    })
+  ];
+  if(rows.length>1) slide.addTable(rows,{x:0.4,y:yOff,w:9.4,colW:[4.5,0.8,1.8,2.3],fill:{color:"f7f9f7"},border:{color:"d8e8d8",pt:0.5},fontSize:10,color:"2c3c2c"});
+  slide.addText(`GREEN Engineering KZ · ${new Date().toLocaleDateString("en-GB")}`,{x:0.4,y:6.8,w:9.4,h:0.25,fontSize:8,color:"b0c0b0",align:"right"});
+  prs.writeFile({fileName:`${p.name||"project"}_status.pptx`});
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+load(); renderAll();
+</script>
+</body>
+</html>
