@@ -28,7 +28,7 @@ const RAG = {
   yellow: { bg:"#f5f0e4", text:"#7a6020", dot:"#c8a030", label:"At risk"  },
   red:    { bg:"#f5e8e8", text:"#7a3030", dot:"#c86060", label:"Issues"   }
 };
-const CURRENCIES = ["USD","EUR","KZT","MNT","GBP"];
+const CURRENCIES = null;
 
 let projects = [];
 let saving = false;
@@ -112,7 +112,7 @@ function billingPanelHTML(d, pid) {
       <div class="billing-row"><label><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label></div>
       <div class="billing-row">
         <label><input type="checkbox" ${b.invoiceSent?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceSent',this.checked)"> Invoice sent</label>
-        ${b.invoiceSent?`<input type="date" value="${b.sentDate||""}" onchange="window.setBilling('${pid}','${d.id}','sentDate',this.value)">
+       ${b.invoiceSent?`<input type="text" value="${b.sentDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','sentDate',this.value)">
           ${b.sentDate?`<span class="days-chip" style="${chipStyle}">${days}d</span>`:""}` : ""}
       </div>
       ${b.invoiceSent&&b.sentDate?`<div class="billing-hint" style="color:${hintColor}">${hint}</div>`:""}
@@ -181,9 +181,9 @@ function cardHTML(p) {
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="font-size:11px;color:#7a8c7a">Contract value:</span>
-        <select onchange="window.setField('${p.id}','currency',this.value)" style="font-size:12px;padding:2px 4px">
-          ${CURRENCIES.map(c=>`<option ${c===p.currency?"selected":""}>${c}</option>`).join("")}
-        </select>
+        <input type="text" value="${esc(p.currency)}" placeholder="USD" maxlength="5"
+  style="width:60px;font-size:12px;text-align:center;text-transform:uppercase"
+  onchange="window.setField('${p.id}','currency',this.value.toUpperCase())">
         <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:140px"
           onchange="window.setField('${p.id}','contractValue',this.value)">
       </div>
