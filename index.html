@@ -230,8 +230,12 @@ function cardHTML(p) {
         <input type="text" value="${esc(p.currency)}" placeholder="USD" maxlength="5"
   style="width:60px;font-size:12px;text-align:center;text-transform:uppercase"
   onchange="window.setField('${p.id}','currency',this.value.toUpperCase())">
-        <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:140px"
+       <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:140px"
           onchange="window.setField('${p.id}','contractValue',this.value)">
+        <span style="font-size:11px;color:#7a8c7a;margin-left:8px">Payment terms:</span>
+        <input type="number" placeholder="30" value="${p.paymentDays||""}" style="width:55px;font-size:12px"
+          onchange="window.setField('${p.id}','paymentDays',this.value)">
+        <span style="font-size:11px;color:#7a8c7a">days</span>
       </div>
     </div>
     <div class="card-body">
