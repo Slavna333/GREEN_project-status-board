@@ -354,13 +354,21 @@ window.exportPPTX = pid => {
 // ── Firebase listener (real-time sync) ────────────────────────────────────────
 onValue(dbRef, snapshot => {
   const data = snapshot.val();
-  if(data && Array.isArray(data)) {
-    projects = data;
-  } else if(data && typeof data === "object") {
-    projects = Object.values(data);
-  } else {
-    projects = [emptyProject()];
+  let loaded = [];
+  if (Array.isArray(data)) {
+    loaded = data;
+  } else if (data && typeof data === "object") {
+    loaded = Object.values(data);
   }
+  // Sanitize: ensure every project has a deliverables array
+  projects = loaded.map(p => ({
+    ...p,
+    deliverables: Array.isArray(p.deliverables) ? p.deliverables.map(d => ({
+      ...d,
+      billing: d.billing || emptyBilling()
+    })) : []
+  }));
+  if (projects.length === 0) projects = [emptyProject()];
   renderAll();
 });
 </script>
