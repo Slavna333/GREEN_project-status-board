@@ -107,12 +107,25 @@ function billingIcon(d) {
 }
 
 function billingPanelHTML(d, pid) {
-  const b = d.billing; const days = daysSince(b.sentDate);
+  const b = d.billing || emptyBilling();
+  const days = daysSince(b.sentDate);
   const chipStyle = days===null ? "" : days>30 ? "background:#f5e8e8;color:#7a3030" : days>14 ? "background:#f5f0e4;color:#7a6020" : "background:#e4f0e4;color:#3a6b3a";
   const hint = days===null ? "" : days>30 ? "Overdue — consider penalties" : days>14 ? "Consider sending a reminder" : "Within payment window";
   const hintColor = days>30 ? "#7a3030" : days>14 ? "#7a6020" : "#7a8c7a";
-  const cur = getProject(pid).currency;
-  return `<div class="billing-panel${d._open?" open":""}" id="bp_${d.id}">
+  const cur = (getProject(pid)||{}).currency || "USD";
+
+  const sentDateInput = b.invoiceSent
+    ? `<input type="text" value="${b.sentDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','sentDate',this.value)">`
+    : "";
+  const daysChip = (b.invoiceSent && b.sentDate && days !== null)
+    ? `<span class="days-chip" style="${chipStyle}">${days}d</span>`
+    : "";
+  const hintRow = (b.invoiceSent && b.sentDate)
+    ? `<div class="billing-hint" style="color:${hintColor}">${hint}</div>`
+    : "";
+  const paidBadge = b.paid ? `<span class="paid-badge">Paid</span>` : "";
+
+  return `<div class="billing-panel${d._open ? " open" : ""}" id="bp_${d.id}">
     <div class="billing-inner">
       <div style="font-size:10px;color:#7a8c7a;text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:8px">Billing</div>
       <div class="billing-row" style="margin-bottom:8px">
@@ -120,19 +133,22 @@ function billingPanelHTML(d, pid) {
         <input type="number" style="width:120px" value="${d.amount||""}" placeholder="0"
           onchange="window.setDelAmount('${pid}','${d.id}',this.value)">
       </div>
-      <div class="billing-row"><label><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label></div>
+      <div class="billing-row">
+        <label><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label>
+      </div>
       <div class="billing-row">
         <label><input type="checkbox" ${b.invoiceSent?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceSent',this.checked)"> Invoice sent</label>
-       ${b.invoiceSent?`<input type="text" value="${b.sentDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','sentDate',this.value)">
-          ${b.sentDate?`<span class="days-chip" style="${chipStyle}">${days}d</span>`:""}` : ""}
+        ${sentDateInput} ${daysChip}
       </div>
-      ${b.invoiceSent&&b.sentDate?`<div class="billing-hint" style="color:${hintColor}">${hint}</div>`:""}
-      <div class="billing-row"><label><input type="checkbox" ${b.clientFeedback?"checked":""} onchange="window.setBilling('${pid}','${d.id}','clientFeedback',this.checked)"> Client acknowledged</label></div>
+      ${hintRow}
+      <div class="billing-row">
+        <label><input type="checkbox" ${b.clientFeedback?"checked":""} onchange="window.setBilling('${pid}','${d.id}','clientFeedback',this.checked)"> Client acknowledged</label>
+      </div>
       <div class="billing-row">
         <label><input type="checkbox" ${b.paid?"checked":""} onchange="window.setBilling('${pid}','${d.id}','paid',this.checked)">
           <span style="font-weight:${b.paid?600:400};color:${b.paid?"#3a6b3a":"#2c3c2c"}">Payment received</span>
         </label>
-        ${b.paid?`<span class="paid-badge">Paid</span>`:""}
+        ${paidBadge}
       </div>
     </div>
   </div>`;
