@@ -69,10 +69,22 @@ function calcFin(p) {
 function financeHTML(p) {
   const {cv,paid,ar,remaining,paidPct,arPctC,arPctR} = calcFin(p);
   if(!cv) return "";
+  const allocated = p.deliverables.reduce((s,d)=>s+num(d.amount),0);
+  const diff = cv - allocated;
+  const allocColor = Math.abs(diff) < 0.01 ? "#3a6b3a" : diff < 0 ? "#7a3030" : "#7a6020";
+  const allocNote = Math.abs(diff) < 0.01
+    ? "Deliverables match contract value"
+    : diff > 0
+    ? `${p.currency} ${fmt(diff)} unallocated`
+    : `${p.currency} ${fmt(Math.abs(diff))} over contract value`;
   return `<div class="finance-block">
     <div class="finance-header">
       <span class="section-label" style="margin:0">Contract finances</span>
       <span style="font-size:11px;font-weight:600;color:#2c3c2c">${p.currency} ${fmt(cv)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:5px 8px;background:#fff;border-radius:6px;border:0.5px solid #d8e8d8">
+      <span style="font-size:11px;color:#7a8c7a">Allocated to deliverables:</span>
+      <span style="font-size:11px;font-weight:600;color:${allocColor}">${p.currency} ${fmt(allocated)} — ${allocNote}</span>
     </div>
     <div class="prog-bar">
       <div class="prog-paid" style="width:${paidPct}%"></div>
@@ -85,7 +97,6 @@ function financeHTML(p) {
     </div>
   </div>`;
 }
-
 // ── Deliverables ──────────────────────────────────────────────────────────────
 function billingIcon(d) {
   if(!d.done) return "";
