@@ -273,9 +273,9 @@ function renderAll() {
 window.setField      = (pid,f,v) => updateProject(pid,p=>p[f]=v);
 window.cycleRag      = pid => { const o=["green","yellow","red"]; updateProject(pid,p=>p.rag=o[(o.indexOf(p.rag)+1)%3]); };
 window.addProject    = () => { projects.push(emptyProject()); saveToFirebase(); renderAll(); };
-window.removeProject = pid => { projects=projects.filter(p=>p.id!==pid); saveToFirebase(); renderAll(); };
+window.removeProject = pid => { if(!confirm("Delete this project? This cannot be undone.")) return; projects=projects.filter(p=>p.id!==pid); saveToFirebase(); renderAll(); };
 window.addDel        = pid => updateProject(pid,p=>p.deliverables.push(emptyDel()));
-window.removeDel     = (pid,did) => updateProject(pid,p=>p.deliverables=p.deliverables.filter(d=>d.id!==did));
+window.removeDel     = (pid,did) => { if(!confirm("Delete this deliverable?")) return; updateProject(pid,p=>p.deliverables=p.deliverables.filter(d=>d.id!==did)); };
 window.toggleDone    = (pid,did,val) => updateProject(pid,p=>{ const d=p.deliverables.find(d=>d.id===did); d.done=val; if(val) d._open=true; });
 window.toggleBilling = (pid,did) => { const p=getProject(pid); const d=p.deliverables.find(d=>d.id===did); if(!d.done) return; d._open=!d._open; saveToFirebase(); renderAll(); };
 window.setBilling    = (pid,did,f,v) => updateProject(pid,p=>{ p.deliverables.find(d=>d.id===did).billing[f]=v; });
