@@ -85,7 +85,7 @@ function calcFin(p) {
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 function renderSummary() {
-  const usedCurrencies=[...new Set(projects.map(p=>p.currency).filter(Boolean))].filter(c=>c!=="RUB");
+  const usedCurrencies=[...new Set(["USD",...projects.map(p=>p.currency).filter(Boolean)])].filter(c=>c!=="RUB");
   const ratesHTML=usedCurrencies.length?`
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:${B.gray15};border-radius:4px">
       <span style="font-size:11px;color:${B.textLight};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Exchange rates to RUB:</span>
@@ -125,6 +125,55 @@ function renderSummary() {
   });
 
   const planRub=num(summary.planRub)*1000000;
+  // Визуализация для department total
+  const collectedPct = planRub>0&&allConverted ? Math.min(100,Math.round(totalPaid/planRub*100)) : (allConverted&&totalCv>0 ? Math.round(totalPaid/totalCv*100) : 0);
+  const arPctViz     = planRub>0&&allConverted ? Math.min(100-collectedPct,Math.round(totalAr/planRub*100)) : (allConverted&&totalCv>0 ? Math.min(100-collectedPct,Math.round(totalAr/totalCv*100)) : 0);
+  const base = planRub>0 ? planRub : totalCv;
+  const vizHTML = allConverted&&base>0 ? `
+    <tr style="background:${B.white}">
+      <td colspan="7" style="padding:10px 12px 14px">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:${B.textLight};margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+              <span>Collection progress${planRub>0?" vs plan":""}</span>
+              <span>${collectedPct}%</span>
+            </div>
+            <div style="height:12px;background:${B.border};border-radius:2px;overflow:hidden;display:flex">
+              <div style="width:${collectedPct}%;background:${B.green};transition:width .3s" title="Collected: ${fmtM(totalPaid)} M RUB"></div>
+              <div style="width:${arPctViz}%;background:#c8a030;transition:width .3s" title="AR: ${fmtM(totalAr)} M RUB"></div>
+            </div>
+            <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
+              <span style="font-size:10px;color:#1a6b50;display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${B.green};border-radius:1px;display:inline-block"></span>Collected ${fmtM(totalPaid)} M</span>
+              ${totalAr>0?`<span style="font-size:10px;color:#7a6020;display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#c8a030;border-radius:1px;display:inline-block"></span>AR ${fmtM(totalAr)} M</span>`:""}
+              <span style="font-size:10px;color:${B.textLight};display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${B.border};border-radius:1px;display:inline-block"></span>Outstanding ${fmtM(totalRemain)} M</span>
+              ${planRub>0?`<span style="font-size:10px;color:${B.textLight};display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${B.gray25};border-radius:1px;display:inline-block"></span>Plan ${fmtM(planRub)} M</span>`:""}
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+            <svg width="80" height="80" viewBox="0 0 80 80">
+              ${(()=>{
+                const r=34,cx=40,cy=40,total2=planRub>0?planRub:totalCv;
+                const paidA=Math.min(collectedPct/100*2*Math.PI,2*Math.PI-0.01);
+                const arA=Math.min((collectedPct+arPctViz)/100*2*Math.PI,2*Math.PI-0.01);
+                const arc=(start,end,color)=>{
+                  const x1=cx+r*Math.sin(start),y1=cy-r*Math.cos(start);
+                  const x2=cx+r*Math.sin(end),y2=cy-r*Math.cos(end);
+                  const large=end-start>Math.PI?1:0;
+                  return `<path d="M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} Z" fill="${color}"/>`;
+                };
+                const bg=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${B.border}"/>`;
+                const paid2=paidA>0?arc(0,paidA,B.green):"";
+                const ar2=arA>paidA?arc(paidA,arA,"#c8a030"):"";
+                const inner=`<circle cx="${cx}" cy="${cy}" r="22" fill="${B.white}"/>`;
+                const label=`<text x="${cx}" y="${cy-3}" text-anchor="middle" font-size="13" font-weight="700" font-family="Arial" fill="${B.text}">${collectedPct}%</text><text x="${cx}" y="${cy+10}" text-anchor="middle" font-size="8" font-family="Arial" fill="${B.textLight}">collected</text>`;
+                return bg+paid2+ar2+inner+label;
+              })()}
+            </svg>
+          </div>
+        </div>
+      </td>
+    </tr>` : "";
+
   const totalRow=`<tr style="background:${B.green15};border-top:2px solid ${B.green}">
     <td colspan="3" style="padding:8px 12px;font-size:11px;color:${B.green};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Department total</td>
     <td style="padding:8px 12px;font-size:13px;color:#1a6b50;font-weight:700;text-align:right">${allConverted?fmtM(totalPaid):"—"}</td>
@@ -137,7 +186,8 @@ function renderSummary() {
     <td colspan="4" style="padding:6px 12px;font-size:11px;color:${B.textLight};text-align:right">
       Collected <b style="color:#1a6b50">${Math.round(totalPaid/planRub*100)}%</b> of plan · Outstanding <b>${Math.round(totalRemain/planRub*100)}%</b> of plan
     </td>
-  </tr>`:""}`;
+  </tr>`:""}
+  ${vizHTML}`;
 
   document.getElementById("summaryBlock").innerHTML=`
     <div style="background:${B.white};border:1px solid ${B.border};border-radius:4px;margin-bottom:24px;overflow:hidden">
@@ -541,6 +591,8 @@ onValue(summaryRef,snapshot=>{
   <span style="color:#7a6020;font-weight:700">● At risk</span>
   <span style="color:#8b2a1f;font-weight:700">● Issues</span>
 </div>
+
+<input type="hidden" id="apiKey">
 
 <div id="summaryBlock"></div>
 
