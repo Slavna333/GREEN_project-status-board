@@ -88,6 +88,29 @@ function calcFin(p) {
   return {cv,paid,ar,remaining,paidPct,arPctC,arPctR};
 }
 
+// Overdue level: "none" | "approaching" | "overdue" | "critical"
+// Approaching: sent > 70% of terms, not yet overdue
+// Overdue: past payment terms
+// Critical: more than 14 days past terms
+function getOverdueLevel(d, paymentDays) {
+  const b = d.billing || {};
+  if (b.paid || !b.invoiceSent || !b.sentDate) return "none";
+  const sent = daysSince(b.sentDate);
+  if (sent === null) return "none";
+  const terms = num(paymentDays) || 30;
+  if (sent > terms + 14) return "critical";
+  if (sent > terms) return "overdue";
+  if (sent > terms * 0.7) return "approaching";
+  return "none";
+}
+
+const OVERDUE_STYLE = {
+  none:        {border: "", bg: "", text: "", label: "", dot: ""},
+  approaching: {border: "#c8a030", bg: "#fef9e7", text: "#7a6020", label: "Due soon",  dot: "#c8a030"},
+  overdue:     {border: "#d9534f", bg: "#fdf0ef", text: "#8b2a1f", label: "Overdue",   dot: "#d9534f"},
+  critical:    {border: "#8b2a1f", bg: "#f9d6d2", text: "#6b1e15", label: "Critical",  dot: "#8b2a1f"},
+};
+
 function calcFinRub(p) {
   const currentRate=getRate(p);
   // total collected (all time) — uses locked rate per payment
@@ -140,13 +163,21 @@ function renderSummary() {
     const ytdPct=yearPlan>0&&hasRate?Math.min(999,Math.round(collectedYTD/yearPlan*100)):null;
     const pctColor=ytdPct===null?"":ytdPct>=100?"#1a6b50":ytdPct>=70?"#1a6b50":ytdPct>=40?"#7a6020":"#8b2a1f";
     const warn=missingDate>0?`<span title="${missingDate} paid deliverable(s) missing payment date — not counted in YTD" style="color:#8b2a1f;font-size:11px;margin-left:4px">⚠</span>`:"";
+    // Overdue indicator: worst level wins
+    const levels=p.deliverables.map(d=>getOverdueLevel(d,p.paymentDays));
+    const criticalN=levels.filter(l=>l==="critical").length;
+    const overdueN=levels.filter(l=>l==="overdue").length;
+    const approachingN=levels.filter(l=>l==="approaching").length;
+    const overdueBadge=criticalN>0?`<span title="${criticalN} critical invoice(s) — more than 14 days past terms" style="font-size:10px;font-weight:700;background:#f9d6d2;color:#6b1e15;border:1px solid #8b2a1f;border-radius:2px;padding:1px 6px;margin-left:6px">⚠ ${criticalN}</span>`:
+                        overdueN>0?`<span title="${overdueN} overdue invoice(s)" style="font-size:10px;font-weight:700;background:#fdf0ef;color:#8b2a1f;border-radius:2px;padding:1px 6px;margin-left:6px">${overdueN} overdue</span>`:
+                        approachingN>0?`<span title="${approachingN} invoice(s) due soon" style="font-size:10px;font-weight:600;background:#fef9e7;color:#7a6020;border-radius:2px;padding:1px 6px;margin-left:6px">${approachingN} due soon</span>`:"";
 
     if(!hasRate) allOk=false;
     if(hasRate) { deptYTD+=collectedYTD; deptAR+=arRub; deptRemain+=remainRub; }
     deptYearPlan+=yearPlan;
 
     return `<tr style="border-bottom:1px solid ${B.border}">
-      <td style="padding:8px 12px;font-size:12px;font-weight:600;color:${B.text}">${p.name||"—"}${warn}</td>
+      <td style="padding:8px 12px;font-size:12px;font-weight:600;color:${B.text}">${p.name||"—"}${warn}${overdueBadge}</td>
       <td style="padding:8px 12px;text-align:center">
         <span style="background:${r.bg};color:${r.text};font-size:10px;font-weight:700;padding:2px 10px;border-radius:2px;text-transform:uppercase;letter-spacing:.04em">${r.label}</span>
       </td>
@@ -379,7 +410,8 @@ function billingPanelHTML(d,pid) {
 
 // ── Deliverable ───────────────────────────────────────────────────────────────
 function deliverableHTML(d,pid) {
-  const cur=getProject(pid).currency;
+  const p=getProject(pid);
+  const cur=p.currency;
   const statusOpts=["Not started","In progress","Done"];
   const statusColor={"Not started":B.textLight,"In progress":"#185fa5","Done":"#1a6b50"};
   const statusBg={"Not started":B.gray15,"In progress":"#d8eaf5","Done":B.green25};
@@ -387,12 +419,30 @@ function deliverableHTML(d,pid) {
   const isDone=st==="Done";
   const isPaid=d.billing?.paid;
   const missingDate=isPaid&&!d.billing?.paidDate;
-  return `<div style="border:1px solid ${missingDate?"#d9534f":B.border};border-radius:2px;overflow:hidden;margin-bottom:6px">
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${isPaid?B.green15:isDone?"#fffef5":B.white};cursor:${isDone?"pointer":"default"}" onclick="${isDone?`window.toggleBilling('${pid}','${d.id}')`:""}">
+  const overdueLevel=getOverdueLevel(d,p.paymentDays);
+  const os=OVERDUE_STYLE[overdueLevel];
+  const sentDays=d.billing?.sentDate?daysSince(d.billing.sentDate):null;
+  const terms=num(p.paymentDays)||30;
+  // Border priority: missing date > overdue/critical > approaching > normal
+  const borderColor=missingDate?"#d9534f":(overdueLevel!=="none"?os.border:B.border);
+  const borderWidth=(missingDate||overdueLevel==="critical")?"2px":"1px";
+  // Background tint for unpaid overdue rows (only when not done/paid yet)
+  const rowBg=isPaid?B.green15:isDone?"#fffef5":(overdueLevel==="overdue"||overdueLevel==="critical"?os.bg:B.white);
+  // Inline overdue chip shown next to the deliverable name
+  const overdueChip=(overdueLevel!=="none"&&!isPaid)?(()=>{
+    const label=overdueLevel==="approaching"?`Due in ${terms-sentDays}d`:
+                overdueLevel==="overdue"?`${sentDays-terms}d overdue`:
+                `${sentDays-terms}d overdue · critical`;
+    const weight=overdueLevel==="critical"?"700":"600";
+    return `<span title="Invoice sent ${sentDays}d ago · terms ${terms}d" style="font-size:10px;font-weight:${weight};background:${os.bg};color:${os.text};border:1px solid ${os.border};border-radius:2px;padding:2px 6px;white-space:nowrap">${label}</span>`;
+  })():"";
+  return `<div style="border:${borderWidth} solid ${borderColor};border-radius:2px;overflow:hidden;margin-bottom:6px">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${rowBg};cursor:${isDone?"pointer":"default"}" onclick="${isDone?`window.toggleBilling('${pid}','${d.id}')`:""}">
       <input type="checkbox" ${isPaid?"checked":""} onclick="event.stopPropagation()" style="opacity:0.5;cursor:default" title="${isPaid?"Payment received":"Checked when payment received"}">
       <input type="text" value="${esc(d.name)}" placeholder="Deliverable name"
         style="flex:1;font-size:12px;background:transparent;border:none;border-bottom:1px dashed ${B.border};border-radius:0;padding:2px 4px;color:${isPaid?B.textLight:B.text};text-decoration:${isPaid?"line-through":"none"}"
         onchange="window.setDelName('${pid}','${d.id}',this.value)">
+      ${overdueChip}
       <select onchange="window.setDelStatus('${pid}','${d.id}',this.value)"
         style="font-size:11px;padding:2px 8px;border-radius:2px;border:1px solid ${B.border};font-weight:600;background:${statusBg[st]};color:${statusColor[st]};cursor:pointer">
         ${statusOpts.map(o=>`<option value="${o}" ${o===st?"selected":""}>${o}</option>`).join("")}
@@ -411,9 +461,22 @@ function deliverablesHTML(p) {
   const done=p.deliverables.filter(d=>(d.status||"Not started")==="Done").length;
   const paid=p.deliverables.filter(d=>d.billing?.paid).length;
   const pct=p.deliverables.length?Math.round(done/p.deliverables.length*100):0;
+  // Overdue counters per level
+  const levels=p.deliverables.map(d=>getOverdueLevel(d,p.paymentDays));
+  const approachingN=levels.filter(l=>l==="approaching").length;
+  const overdueN=levels.filter(l=>l==="overdue").length;
+  const criticalN=levels.filter(l=>l==="critical").length;
+  const overdueChips=[
+    criticalN>0?`<span title="${criticalN} critical (>14d past terms)" style="font-size:10px;font-weight:700;background:#f9d6d2;color:#6b1e15;border:1px solid #8b2a1f;border-radius:2px;padding:2px 6px">⚠ ${criticalN} critical</span>`:"",
+    overdueN>0?`<span title="${overdueN} overdue" style="font-size:10px;font-weight:700;background:#fdf0ef;color:#8b2a1f;border-radius:2px;padding:2px 6px">${overdueN} overdue</span>`:"",
+    approachingN>0?`<span title="${approachingN} due soon" style="font-size:10px;font-weight:600;background:#fef9e7;color:#7a6020;border-radius:2px;padding:2px 6px">${approachingN} due soon</span>`:"",
+  ].filter(Boolean).join(" ");
   return `<div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:10px;color:${B.textLight};text-transform:uppercase;letter-spacing:.08em;font-weight:700">Deliverables</span>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:10px;color:${B.textLight};text-transform:uppercase;letter-spacing:.08em;font-weight:700">Deliverables</span>
+        ${overdueChips}
+      </div>
       ${p.deliverables.length?`<span style="font-size:11px;color:${B.textLight}">${done}/${p.deliverables.length} done · ${paid} paid</span>`:""}
     </div>
     ${p.deliverables.length?`<div style="height:4px;background:${B.border};border-radius:1px;margin-bottom:10px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${B.green};transition:width .3s"></div></div>`:""}
