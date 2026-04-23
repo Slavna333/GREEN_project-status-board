@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Status Board — GREEN Engineering</title>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAZx_SFvKalRi8T2hhpCFqflZQRp4v9hGc",
+  authDomain: "green-project-status-board.firebaseapp.com",
+  databaseURL: "https://green-project-status-board-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "green-project-status-board",
+  storageBucket: "green-project-status-board.firebasestorage.app",
+  messagingSenderId: "111733022000",
+  appId: "1:111733022000:web:8a3580d5474a7eecb83cf5"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const dbRef = ref(db, "psb/projects");
+const summaryRef = ref(db, "psb/summary");
+
+// ── Brand colors ──────────────────────────────────────────────────────────────
+const B = {
+  green:     "#34B78F",
+  green85:   "#4ec49d",
+  green50:   "#9adbca",
+  green25:   "#cdeee6",
+  green15:   "#e5f6f2",
+  gray:      "#5B6770",
+  gray85:    "#6d7980",
+  gray50:    "#adb3b7",
+  gray25:    "#d6d9db",
+  gray15:    "#eceef0",
+  white:     "#ffffff",
+  text:      "#2c2c2c",
+  textLight: "#5B6770",
+  border:    "#d6d9db",
+  bg:        "#f5f6f7",
+};
+
+const RAG = {
+  green:  { bg:"#e8f8f3", text:"#1a6b50", dot:B.green,  label:"On track" },
+  yellow: { bg:"#fef9e7", text:"#7a6020", dot:"#c8a030", label:"At risk"  },
+  red:    { bg:"#fdf0ef", text:"#8b2a1f", dot:"#d9534f", label:"Issues"   }
+};
+
+let projects = [];
+let summary = { planRub: "", rates: {} };
+let saving = false;
+
+function fmt(n) { return (n==null||n==="") ? "" : Number(n).toLocaleString("en-US"); }
+function fmtM(n) { return (n==null||isNaN(n)) ? "—" : (n/1000000).toFixed(2); }
+function num(v) { return parseFloat(v)||0; }
+function daysSince(d) { if(!d) return null; return Math.floor((Date.now()-new Date(d).getTime())/86400000); }
+function uid() { return Date.now()+"_"+Math.random().toString(36).slice(2); }
+function emptyBilling() { return {invoiceReady:false,invoiceSent:false,sentDate:"",clientFeedback:false,paid:false,paidDate:""}; }
+function emptyDel(name="") { return {id:uid(),name,done:false,amount:"",billing:emptyBilling()}; }
+function emptyProject() { return {id:uid(),name:"",client:"",rag:"green",contractValue:"",currency:"USD",paymentDays:"",deliverables:[]}; }
+function esc(s) { return (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function getProject(id) { return projects.find(p=>p.id===id); }
+
+function saveToFirebase() {
+  if(saving) return; saving=true;
+  set(dbRef,projects).then(()=>{saving=false;}).catch(()=>{saving=false;});
+}
+function saveSummary() { set(summaryRef,summary).catch(()=>{}); }
+function updateProject(id,fn) { const p=getProject(id); fn(p); saveToFirebase(); renderAll(); }
+
+// ── Finances ──────────────────────────────────────────────────────────────────
+function calcFin(p) {
+  const cv=num(p.contractValue);
+  const paid=p.deliverables.filter(d=>d.billing?.paid).reduce((s,d)=>s+num(d.amount),0);
+  const ar=p.deliverables.filter(d=>d.billing?.invoiceSent&&!d.billing?.paid).reduce((s,d)=>s+num(d.amount),0);
+  const remaining=Math.max(0,cv-paid);
+  const paidPct=cv?Math.min(100,Math.round(paid/cv*100)):0;
+  const arPctC=cv?Math.min(100-paidPct,Math.round(ar/cv*100)):0;
+  const arPctR=remaining>0?Math.round(ar/remaining*100):0;
+  return {cv,paid,ar,remaining,paidPct,arPctC,arPctR};
+}
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+function renderSummary() {
+  const usedCurrencies=[...new Set(projects.map(p=>p.currency).filter(Boolean))].filter(c=>c!=="RUB");
+  const ratesHTML=usedCurrencies.length?`
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:${B.gray15};border-radius:4px">
+      <span style="font-size:11px;color:${B.textLight};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Exchange rates to RUB:</span>
+      ${usedCurrencies.map(c=>`<div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:12px;color:${B.text};font-weight:700">${c}:</span>
+        <input type="number" placeholder="0" value="${summary.rates[c]||""}" style="width:72px;font-size:12px" onchange="window.setRate('${c}',this.value)">
+      </div>`).join("")}
+    </div>`:"";;
+
+  const rows=projects.map(p=>{
+    const {cv,paid,ar,remaining}=calcFin(p);
+    const rate=p.currency==="RUB"?1:num(summary.rates[p.currency]);
+    const hasRate=p.currency==="RUB"||rate>0;
+    const paidRub=hasRate?paid*rate:null;
+    const arRub=hasRate?ar*rate:null;
+    const remainRub=hasRate?remaining*rate:null;
+    const cvRub=hasRate?cv*rate:null;
+    const r=RAG[p.rag];
+    return `<tr style="border-bottom:1px solid ${B.border}">
+      <td style="padding:8px 12px;font-size:12px;font-weight:600;color:${B.text}">${p.name||"—"}</td>
+      <td style="padding:8px 12px;text-align:center"><span style="background:${r.bg};color:${r.text};font-size:10px;font-weight:700;padding:2px 10px;border-radius:2px;letter-spacing:.04em;text-transform:uppercase">${r.label}</span></td>
+      <td style="padding:8px 12px;font-size:11px;color:${B.textLight};text-align:right">${p.currency} ${fmt(cv)}</td>
+      <td style="padding:8px 12px;font-size:12px;color:#1a6b50;font-weight:600;text-align:right">${paidRub!==null?fmtM(paidRub):"—"}</td>
+      <td style="padding:8px 12px;font-size:12px;color:#7a6020;font-weight:600;text-align:right">${arRub!==null?fmtM(arRub):"—"}</td>
+      <td style="padding:8px 12px;font-size:12px;color:${B.text};text-align:right">${remainRub!==null?fmtM(remainRub):"—"}</td>
+      <td style="padding:8px 12px;font-size:12px;color:${B.text};font-weight:600;text-align:right">${cvRub!==null?fmtM(cvRub):`<span style="font-size:10px;color:${B.gray50}">no rate</span>`}</td>
+    </tr>`;
+  }).join("");
+
+  let totalPaid=0,totalAr=0,totalRemain=0,totalCv=0,allConverted=true;
+  projects.forEach(p=>{
+    const {cv,paid,ar,remaining}=calcFin(p);
+    const rate=p.currency==="RUB"?1:num(summary.rates[p.currency]);
+    const hasRate=p.currency==="RUB"||rate>0;
+    if(!hasRate){allConverted=false;return;}
+    totalPaid+=paid*rate; totalAr+=ar*rate; totalRemain+=remaining*rate; totalCv+=cv*rate;
+  });
+
+  const planRub=num(summary.planRub)*1000000;
+  const totalRow=`<tr style="background:${B.green15};border-top:2px solid ${B.green}">
+    <td colspan="3" style="padding:8px 12px;font-size:11px;color:${B.green};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Department total</td>
+    <td style="padding:8px 12px;font-size:13px;color:#1a6b50;font-weight:700;text-align:right">${allConverted?fmtM(totalPaid):"—"}</td>
+    <td style="padding:8px 12px;font-size:13px;color:#7a6020;font-weight:700;text-align:right">${allConverted?fmtM(totalAr):"—"}</td>
+    <td style="padding:8px 12px;font-size:13px;color:${B.text};font-weight:700;text-align:right">${allConverted?fmtM(totalRemain):"—"}</td>
+    <td style="padding:8px 12px;font-size:13px;color:${B.text};font-weight:700;text-align:right">${allConverted?fmtM(totalCv):"—"}</td>
+  </tr>
+  ${planRub>0&&allConverted?`<tr style="background:${B.gray15}">
+    <td colspan="3" style="padding:6px 12px;font-size:11px;color:${B.textLight}">Plan: <b style="color:${B.text}">${fmtM(planRub)} M RUB</b></td>
+    <td colspan="4" style="padding:6px 12px;font-size:11px;color:${B.textLight};text-align:right">
+      Collected <b style="color:#1a6b50">${Math.round(totalPaid/planRub*100)}%</b> of plan · Outstanding <b>${Math.round(totalRemain/planRub*100)}%</b> of plan
+    </td>
+  </tr>`:""}`;
+
+  document.getElementById("summaryBlock").innerHTML=`
+    <div style="background:${B.white};border:1px solid ${B.border};border-radius:4px;margin-bottom:24px;overflow:hidden">
+      <div style="background:${B.gray};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span style="font-size:12px;font-weight:700;color:${B.white};letter-spacing:.08em;text-transform:uppercase">Revenue Summary · M RUB</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;color:rgba(255,255,255,0.7)">Plan (M RUB):</span>
+          <input type="number" placeholder="0.00" value="${summary.planRub||""}" style="width:80px;font-size:12px;background:rgba(255,255,255,0.15);border-color:rgba(255,255,255,0.3);color:${B.white}" onchange="window.setPlan(this.value)">
+        </div>
+      </div>
+      <div style="padding:14px 16px">
+        ${ratesHTML}
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:2px solid ${B.green}">
+            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Project</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:center;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Status</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Contract</th>
+            <th style="padding:8px 12px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Collected</th>
+            <th style="padding:8px 12px;font-size:10px;color:#7a6020;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">AR</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Outstanding</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.text};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Total RUB</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot>${totalRow}</tfoot>
+        </table>
+        ${!allConverted?`<div style="font-size:10px;color:${B.gray50};margin-top:6px">* Some projects missing exchange rate — total may be incomplete</div>`:""}
+      </div>
+    </div>`;
+}
+
+// ── Finance block per card ────────────────────────────────────────────────────
+function financeHTML(p) {
+  const {cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);
+  if(!cv) return "";
+  const allocated=p.deliverables.reduce((s,d)=>s+num(d.amount),0);
+  const diff=cv-allocated;
+  const allocColor=Math.abs(diff)<0.01?"#1a6b50":diff<0?"#8b2a1f":"#7a6020";
+  const allocNote=Math.abs(diff)<0.01?"Deliverables match contract value":diff>0?`${p.currency} ${fmt(diff)} unallocated`:`${p.currency} ${fmt(Math.abs(diff))} over contract`;
+  return `<div style="margin-bottom:14px;padding:12px 14px;background:${B.gray15};border-left:3px solid ${B.green};border-radius:2px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-size:10px;color:${B.textLight};font-weight:700;letter-spacing:.08em;text-transform:uppercase">Contract finances</span>
+      <span style="font-size:12px;font-weight:700;color:${B.text}">${p.currency} ${fmt(cv)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:5px 8px;background:${B.white};border-radius:2px;border:1px solid ${B.border}">
+      <span style="font-size:11px;color:${B.textLight}">Allocated:</span>
+      <span style="font-size:11px;font-weight:600;color:${allocColor}">${p.currency} ${fmt(allocated)} — ${allocNote}</span>
+    </div>
+    <div style="height:8px;background:${B.border};border-radius:1px;overflow:hidden;display:flex;margin-bottom:8px">
+      <div style="width:${paidPct}%;background:${B.green};transition:width .3s"></div>
+      <div style="width:${arPctC}%;background:#c8a030;transition:width .3s"></div>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:${B.text}"><span style="width:8px;height:8px;border-radius:1px;background:${B.green};display:inline-block"></span><b>${paidPct}%</b>&nbsp;paid — ${p.currency} ${fmt(paid)}</div>
+      ${ar>0?`<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:${B.text}"><span style="width:8px;height:8px;border-radius:1px;background:#c8a030;display:inline-block"></span>AR: <b>${p.currency} ${fmt(ar)}</b> — ${arPctC}% of contract · ${arPctR}% of outstanding</div>`:""}
+      <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:${B.text}"><span style="width:8px;height:8px;border-radius:1px;background:${B.border};display:inline-block"></span>Outstanding: ${p.currency} ${fmt(remaining)}</div>
+    </div>
+  </div>`;
+}
+
+// ── Billing ───────────────────────────────────────────────────────────────────
+function billingIcon(d) {
+  if(!d.done) return "";
+  if(d.billing.paid) return "💰";
+  if(d.billing.invoiceSent) return "📤";
+  if(d.billing.invoiceReady) return "📋";
+  return "";
+}
+
+function billingPanelHTML(d,pid) {
+  const b=d.billing||emptyBilling();
+  const cur=(getProject(pid)||{}).currency||"USD";
+  const sentDays=daysSince(b.sentDate);
+  const paidDays=(b.sentDate&&b.paidDate)?Math.floor((new Date(b.paidDate)-new Date(b.sentDate))/86400000):null;
+  const terms=num((getProject(pid)||{}).paymentDays)||30;
+  const warn=Math.round(terms*0.7);
+  const unpaidChip=(!b.paid&&b.invoiceSent&&b.sentDate&&sentDays!==null)?
+    (()=>{
+      const style=sentDays>terms?"background:#fdf0ef;color:#8b2a1f":sentDays>warn?"background:#fef9e7;color:#7a6020":"background:#e8f8f3;color:#1a6b50";
+      const hint=sentDays>terms?"Overdue — consider penalties":sentDays>warn?"Consider sending a reminder":"Within payment window";
+      return `<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;margin-left:4px;${style}">${sentDays}d</span>
+              <div style="font-size:11px;margin-left:22px;font-style:italic;margin-top:2px;color:${sentDays>terms?"#8b2a1f":sentDays>warn?"#7a6020":B.textLight}">${hint}</div>`;
+    })():"";
+  const paidChip=(b.paid&&paidDays!==null)?`<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;background:#e8f8f3;color:#1a6b50">Paid in ${paidDays}d</span>`:"";
+  const paidBadge=b.paid?`<span style="font-size:11px;background:${B.green};color:${B.white};border-radius:2px;padding:2px 10px;font-weight:600">Paid</span>`:"";
+  return `<div class="billing-panel${d._open?" open":""}" id="bp_${d.id}">
+    <div style="margin-top:8px;padding:10px 12px;background:${B.gray15};border:1px solid ${B.border};border-radius:2px">
+      <div style="font-size:10px;color:${B.textLight};text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:8px">Billing</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:${B.text}">
+        <span style="white-space:nowrap">Amount (${cur})</span>
+        <input type="number" style="width:120px" value="${d.amount||""}" placeholder="0" onchange="window.setDelAmount('${pid}','${d.id}',this.value)">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:${B.text}"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px;color:${B.text};flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.invoiceSent?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceSent',this.checked)"> Invoice sent</label>
+        ${b.invoiceSent?`<input type="text" value="${b.sentDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','sentDate',this.value)">`:""} ${unpaidChip}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:${B.text}"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.clientFeedback?"checked":""} onchange="window.setBilling('${pid}','${d.id}','clientFeedback',this.checked)"> Client acknowledged</label></div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:${B.text};flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.paid?"checked":""} onchange="window.setBilling('${pid}','${d.id}','paid',this.checked)">
+          <span style="font-weight:${b.paid?700:400};color:${b.paid?B.green:B.text}">Payment received</span>
+        </label>
+        ${b.paid?`<input type="text" value="${b.paidDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','paidDate',this.value)">`:""} ${paidChip} ${paidBadge}
+      </div>
+    </div>
+  </div>`;
+}
+
+function deliverableHTML(d,pid) {
+  const cur=getProject(pid).currency;
+  const statusOpts=["Not started","In progress","Done"];
+  const statusColor={"Not started":B.textLight,"In progress":"#185fa5","Done":"#1a6b50"};
+  const statusBg={"Not started":B.gray15,"In progress":"#d8eaf5","Done":B.green25};
+  const st=d.status||"Not started";
+  return `<div style="border:1px solid ${B.border};border-radius:2px;overflow:hidden;margin-bottom:6px">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${d.done?B.green15:B.white};cursor:${d.done?"pointer":"default"}" onclick="window.toggleBilling('${pid}','${d.id}')">
+      <input type="checkbox" ${d.done?"checked":""} onclick="event.stopPropagation();window.toggleDone('${pid}','${d.id}',this.checked)">
+      <input type="text" value="${esc(d.name)}" placeholder="Deliverable name"
+        style="flex:1;font-size:12px;background:transparent;border:none;border-bottom:1px dashed ${B.border};border-radius:0;padding:2px 4px;color:${d.done?B.textLight:B.text};text-decoration:${d.done?"line-through":"none"}"
+        onchange="window.setDelName('${pid}','${d.id}',this.value)">
+      <select onchange="window.setDelStatus('${pid}','${d.id}',this.value)"
+        style="font-size:11px;padding:2px 8px;border-radius:2px;border:1px solid ${B.border};font-weight:600;background:${statusBg[st]};color:${statusColor[st]};cursor:pointer">
+        ${statusOpts.map(o=>`<option value="${o}" ${o===st?"selected":""}>${o}</option>`).join("")}
+      </select>
+      <input type="number" value="${d.amount||""}" placeholder="Amount" style="width:88px;font-size:11px;text-align:right" onchange="window.setDelAmount('${pid}','${d.id}',this.value)">
+      <span style="font-size:11px;color:${B.textLight};white-space:nowrap">${cur}</span>
+      ${d.done?`<span style="font-size:11px">${billingIcon(d)||"💳"}</span><span style="font-size:11px;color:${B.textLight}">${d._open?"▲":"▼"}</span>`:""}
+      <button onclick="event.stopPropagation();window.removeDel('${pid}','${d.id}')" style="border:none;background:none;cursor:pointer;color:${B.gray50};font-size:16px;padding:0;line-height:1">×</button>
+    </div>
+    ${d.done?billingPanelHTML(d,pid):""}
+  </div>`;
+}
+
+function deliverablesHTML(p) {
+  const done=p.deliverables.filter(d=>d.done).length;
+  const paid=p.deliverables.filter(d=>d.billing?.paid).length;
+  const pct=p.deliverables.length?Math.round(done/p.deliverables.length*100):0;
+  return `<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:10px;color:${B.textLight};text-transform:uppercase;letter-spacing:.08em;font-weight:700">Deliverables</span>
+      ${p.deliverables.length?`<span style="font-size:11px;color:${B.textLight}">${done}/${p.deliverables.length} done · ${paid} paid</span>`:""}
+    </div>
+    ${p.deliverables.length?`<div style="height:4px;background:${B.border};border-radius:1px;margin-bottom:10px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${B.green};transition:width .3s"></div></div>`:""}
+    <div>${p.deliverables.map(d=>deliverableHTML(d,p.id)).join("")||`<div style="font-size:12px;color:${B.gray50};font-style:italic;padding:4px 0">No deliverables yet</div>`}</div>
+    <button onclick="window.addDel('${p.id}')" style="font-size:12px;color:${B.green};background:none;border:1px dashed ${B.green};border-radius:2px;padding:4px 12px;cursor:pointer;margin-top:6px;font-family:Arial,sans-serif;font-weight:600">+ Add deliverable</button>
+  </div>`;
+}
+
+// ── Card ──────────────────────────────────────────────────────────────────────
+function cardHTML(p) {
+  const r=RAG[p.rag];
+  return `<div style="background:${B.white};border:1px solid ${B.border};border-radius:4px;overflow:hidden">
+    <div style="background:${B.gray};padding:12px 16px;border-bottom:3px solid ${B.green}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div style="flex:1;margin-right:10px">
+          <input value="${esc(p.name)}" placeholder="Project name" onchange="window.setField('${p.id}','name',this.value)"
+            style="font-size:15px;font-weight:700;color:${B.white};background:none;border:none;outline:none;width:100%;padding:0;font-family:Arial,sans-serif">
+          <input value="${esc(p.client)}" placeholder="Client / funder" onchange="window.setField('${p.id}','client',this.value)"
+            style="font-size:12px;color:rgba(255,255,255,0.65);background:none;border:none;outline:none;width:100%;padding:0;margin-top:2px;font-family:Arial,sans-serif">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="window.cycleRag('${p.id}')" style="display:flex;align-items:center;gap:6px;background:${r.bg};color:${r.text};border:none;border-radius:2px;padding:4px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:Arial,sans-serif;letter-spacing:.04em">
+            <span style="width:7px;height:7px;border-radius:50%;background:${r.dot};display:inline-block"></span>${r.label}
+          </button>
+          <button onclick="window.removeProject('${p.id}')" style="border:none;background:none;cursor:pointer;color:rgba(255,255,255,0.5);font-size:18px;padding:0;line-height:1">×</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:11px;color:rgba(255,255,255,0.65)">Contract value:</span>
+        <input type="text" value="${esc(p.currency)}" placeholder="USD" maxlength="5"
+          style="width:56px;font-size:12px;text-align:center;text-transform:uppercase;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+          onchange="window.setField('${p.id}','currency',this.value.toUpperCase())">
+        <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:130px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+          onchange="window.setField('${p.id}','contractValue',this.value)">
+        <span style="font-size:11px;color:rgba(255,255,255,0.65);margin-left:8px">Payment terms:</span>
+        <input type="number" placeholder="30" value="${p.paymentDays||""}" style="width:52px;font-size:12px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+          onchange="window.setField('${p.id}','paymentDays',this.value)">
+        <span style="font-size:11px;color:rgba(255,255,255,0.65)">days</span>
+      </div>
+    </div>
+    <div style="padding:14px 16px">
+      ${financeHTML(p)}
+      ${deliverablesHTML(p)}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed ${B.border}">
+        <input type="file" accept=".txt,.pdf" id="fu_${p.id}" style="display:none" onchange="window.handleUpload('${p.id}',this)">
+        <button onclick="document.getElementById('fu_${p.id}').click()" style="font-size:12px;color:${B.textLight};background:${B.white};border:1px solid ${B.border};border-radius:2px;padding:5px 12px;cursor:pointer;font-family:Arial,sans-serif">
+          Upload deliverables (TXT or PDF) ↗
+        </button>
+        <div style="font-size:11px;color:#8b2a1f;margin-top:4px" id="uerr_${p.id}"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px dashed ${B.border};align-items:center">
+        <span style="font-size:11px;color:${B.textLight}">Export:</span>
+        <button onclick="window.exportPDF('${p.id}')" style="font-size:12px;font-weight:700;color:${B.green};background:none;border:1px solid ${B.green};border-radius:2px;padding:5px 14px;cursor:pointer;font-family:Arial,sans-serif">PDF</button>
+        <button onclick="window.exportPPTX('${p.id}')" style="font-size:12px;font-weight:700;color:${B.gray};background:none;border:1px solid ${B.gray};border-radius:2px;padding:5px 14px;cursor:pointer;font-family:Arial,sans-serif">PPTX</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderAll() {
+  renderSummary();
+  document.getElementById("grid").innerHTML=
+    projects.map(cardHTML).join("")+
+    `<button onclick="window.addProject()" style="border:2px dashed ${B.border};border-radius:4px;background:${B.white};cursor:pointer;color:${B.gray50};font-size:14px;padding:2rem;min-height:120px;width:100%;font-family:Arial,sans-serif">+ Add project</button>`;
+  const sum={green:0,yellow:0,red:0};
+  projects.forEach(p=>sum[p.rag]++);
+  document.getElementById("ragSummary").innerHTML=["green","yellow","red"].map(k=>{
+    const r=RAG[k];
+    return `<div style="display:flex;align-items:center;gap:5px;background:${r.bg};border-radius:2px;padding:4px 10px;font-size:12px;font-weight:700;color:${r.text}"><span style="width:7px;height:7px;border-radius:50%;background:${r.dot};display:inline-block"></span>${sum[k]}</div>`;
+  }).join("");
+  document.getElementById("syncStatus").textContent="Synced ✓";
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+window.setField      = (pid,f,v)=>updateProject(pid,p=>p[f]=v);
+window.cycleRag      = pid=>{const o=["green","yellow","red"];updateProject(pid,p=>p.rag=o[(o.indexOf(p.rag)+1)%3]);};
+window.addProject    = ()=>{projects.push(emptyProject());saveToFirebase();renderAll();};
+window.removeProject = pid=>{if(!confirm("Delete this project? This cannot be undone."))return;projects=projects.filter(p=>p.id!==pid);saveToFirebase();renderAll();};
+window.addDel        = pid=>updateProject(pid,p=>p.deliverables.push(emptyDel()));
+window.removeDel     = (pid,did)=>{if(!confirm("Delete this deliverable?"))return;updateProject(pid,p=>p.deliverables=p.deliverables.filter(d=>d.id!==did));};
+window.toggleDone    = (pid,did,val)=>updateProject(pid,p=>{const d=p.deliverables.find(d=>d.id===did);d.done=val;if(val)d._open=true;});
+window.toggleBilling = (pid,did)=>{const p=getProject(pid);const d=p.deliverables.find(d=>d.id===did);if(!d.done)return;d._open=!d._open;saveToFirebase();renderAll();};
+window.setBilling    = (pid,did,f,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).billing[f]=v;});
+window.setDelAmount  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).amount=v;});
+window.setDelName    = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).name=v;});
+window.setDelStatus  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).status=v;});
+window.setPlan       = v=>{summary.planRub=v;saveSummary();renderSummary();};
+window.setRate       = (cur,v)=>{summary.rates[cur]=v;saveSummary();renderSummary();};
+
+// ── Upload ────────────────────────────────────────────────────────────────────
+window.handleUpload=async(pid,input)=>{
+  const file=input.files[0];if(!file)return;
+  const errEl=document.getElementById("uerr_"+pid);
+  const key=document.getElementById("apiKey").value.trim()||localStorage.getItem("green_api_key")||"";
+  if(!key){errEl.textContent="No API key entered above.";return;}
+  localStorage.setItem("green_api_key",key);errEl.textContent="Parsing…";
+  try{
+    let messages;
+    if(file.name.endsWith(".pdf")){const buf=await file.arrayBuffer();let s="";new Uint8Array(buf).forEach(b=>s+=String.fromCharCode(b));
+      messages=[{role:"user",content:[{type:"document",source:{type:"base64",media_type:"application/pdf",data:btoa(s)}},{type:"text",text:'List all deliverables. Return ONLY a JSON array of strings.'}]}];
+    }else{const text=await file.text();messages=[{role:"user",content:`List all deliverables. Return ONLY a JSON array of strings.\n\n${text.slice(0,4000)}`}];}
+    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages})});
+    const data=await res.json();
+    if(data.error){errEl.textContent="API error: "+data.error.message;return;}
+    const raw=data.content.map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    updateProject(pid,p=>parsed.forEach(name=>p.deliverables.push(emptyDel(name))));errEl.textContent="";
+  }catch(e){errEl.textContent="Error: "+e.message;}
+  input.value="";
+};
+
+// ── Export PDF ────────────────────────────────────────────────────────────────
+window.exportPDF=pid=>{
+  const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);const r=RAG[p.rag];
+  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;const allocated=p.deliverables.reduce((s,d)=>s+num(d.amount),0);
+  const rows=p.deliverables.map(d=>{
+    const b=d.billing||emptyBilling();const days=daysSince(b.sentDate);const terms=num(p.paymentDays)||30;
+    const bStatus=b.paid?`Paid ${b.paidDate||""}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+    const bColor=b.paid?"#1a6b50":(b.invoiceSent&&days>terms)?"#8b2a1f":b.invoiceSent?"#7a6020":"#5B6770";
+    const icon=b.paid?"💰":b.invoiceSent?"📤":b.invoiceReady?"📋":"";
+    const st=d.status||"Not started";const stColor=st==="Done"?"#1a6b50":st==="In progress"?"#185fa5":"#5B6770";const stBg=st==="Done"?"#e8f8f3":st==="In progress"?"#d8eaf5":"#eceef0";
+    return `<tr style="border-bottom:1px solid #d6d9db"><td style="padding:7px 10px;font-size:12px;color:${d.done?"#5B6770":"#2c2c2c"};text-decoration:${d.done?"line-through":"none"}">${d.name||"—"}</td>
+      <td style="padding:7px 10px;text-align:center"><span style="background:${stBg};color:${stColor};border-radius:2px;padding:2px 8px;font-size:10px;font-weight:700">${st}</span></td>
+      <td style="padding:7px 10px;font-size:12px;color:#5B6770;text-align:right">${d.amount?p.currency+" "+fmt(d.amount):"—"}</td>
+      <td style="padding:7px 10px;font-size:12px;color:${bColor}">${icon} ${bStatus}</td></tr>`;
+  }).join("");
+  const finBlock=cv?`<div style="margin-bottom:20px;padding:12px 14px;background:#eceef0;border-left:3px solid #34B78F">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:10px;color:#5B6770;text-transform:uppercase;font-weight:700;letter-spacing:.08em">Contract finances</span><span style="font-size:12px;font-weight:700">${p.currency} ${fmt(cv)}</span></div>
+    <div style="height:8px;background:#d6d9db;border-radius:1px;overflow:hidden;display:flex;margin-bottom:8px"><div style="width:${paidPct}%;background:#34B78F"></div><div style="width:${arPctC}%;background:#c8a030"></div></div>
+    <div style="font-size:11px;color:#2c2c2c;display:flex;flex-direction:column;gap:3px">
+      <span><b>${paidPct}% paid</b> — ${p.currency} ${fmt(paid)}</span>
+      ${ar>0?`<span>AR: <b>${p.currency} ${fmt(ar)}</b> — ${arPctC}% of contract</span>`:""}
+      <span>Outstanding: ${p.currency} ${fmt(remaining)}</span>
+      <span>Allocated: ${p.currency} ${fmt(allocated)}</span>
+    </div></div>`:"";
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${p.name}</title>
+  <style>body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#2c2c2c}@media print{body{padding:20px}}</style></head><body>
+  <div style="background:#5B6770;padding:16px 20px;margin-bottom:24px;border-bottom:3px solid #34B78F">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><div style="font-size:20px;font-weight:700;color:#fff">${p.name||"Project"}</div><div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:2px">${p.client||""}</div></div>
+      <div style="background:${r.bg};color:${r.text};font-size:11px;font-weight:700;padding:5px 14px;border-radius:2px;letter-spacing:.06em;text-transform:uppercase">${r.label}</div>
+    </div>
+  </div>
+  ${finBlock}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <div style="font-size:10px;color:#5B6770;text-transform:uppercase;font-weight:700;letter-spacing:.08em">Deliverables</div>
+    <div style="font-size:11px;color:#5B6770">${done}/${total} completed</div>
+  </div>
+  <table style="width:100%;border-collapse:collapse;border:1px solid #d6d9db">
+    <thead><tr style="background:#eceef0"><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Deliverable</th><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Status</th><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Amount</th><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Billing</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="4" style="padding:12px;font-size:12px;color:#adb3b7;font-style:italic">No deliverables</td></tr>'}</tbody>
+  </table>
+  <div style="margin-top:16px;padding:8px 12px;background:#eceef0;font-size:11px;color:#5B6770"><b style="color:#2c2c2c">Billing:</b>&nbsp;&nbsp;📋 Invoice prepared &nbsp;·&nbsp; 📤 Invoice sent &nbsp;·&nbsp; 💰 Payment received</div>
+  <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #d6d9db;padding-top:12px">
+    <div style="font-size:10px;color:#adb3b7">GREEN Engineering & Consulting</div>
+    <div style="font-size:10px;color:#adb3b7">${new Date().toLocaleDateString("en-GB")}</div>
+  </div>
+  </body></html>`;
+  const w=window.open("","_blank");w.document.write(html);w.document.close();w.focus();setTimeout(()=>w.print(),400);
+};
+
+// ── Export PPTX ───────────────────────────────────────────────────────────────
+window.exportPPTX=pid=>{
+  const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);const r=RAG[p.rag];
+  const ragHex=r.text.replace("#","");const ragBgHex=r.bg.replace("#","");
+  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;const allocated=p.deliverables.reduce((s,d)=>s+num(d.amount),0);
+  const prs=new PptxGenJS();prs.layout="LAYOUT_WIDE";const slide=prs.addSlide();slide.background={color:"ffffff"};
+  slide.addShape(prs.ShapeType.rect,{x:0,y:0,w:"100%",h:1.2,fill:{color:"5B6770"}});
+  slide.addShape(prs.ShapeType.rect,{x:0,y:1.15,w:"100%",h:0.05,fill:{color:"34B78F"}});
+  slide.addText(p.name||"Project",{x:0.4,y:0.15,w:7,h:0.5,fontSize:22,bold:true,color:"FFFFFF",fontFace:"Arial"});
+  slide.addText(p.client||"",{x:0.4,y:0.65,w:7,h:0.3,fontSize:12,color:"AABBBB",fontFace:"Arial"});
+  slide.addShape(prs.ShapeType.rect,{x:8.2,y:0.3,w:1.6,h:0.35,fill:{color:ragBgHex}});
+  slide.addText(r.label.toUpperCase(),{x:8.2,y:0.3,w:1.6,h:0.35,fontSize:10,bold:true,color:ragHex,align:"center",valign:"middle",fontFace:"Arial"});
+  let yOff=1.35;
+  if(cv){
+    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:9.4,h:1.55,fill:{color:"ECEEF0"},line:{color:"D6D9DB",pt:0.5}});
+    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:0.04,h:1.55,fill:{color:"34B78F"}});
+    slide.addText("CONTRACT FINANCES",{x:0.55,y:yOff+0.1,w:5,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
+    slide.addText(`${p.currency} ${fmt(cv)}`,{x:6.5,y:yOff+0.1,w:3.1,h:0.22,fontSize:11,bold:true,color:"2C2C2C",align:"right",fontFace:"Arial"});
+    slide.addShape(prs.ShapeType.rect,{x:0.55,y:yOff+0.42,w:9.1,h:0.16,fill:{color:"D6D9DB"}});
+    if(paidPct>0)slide.addShape(prs.ShapeType.rect,{x:0.55,y:yOff+0.42,w:9.1*paidPct/100,h:0.16,fill:{color:"34B78F"}});
+    if(arPctC>0)slide.addShape(prs.ShapeType.rect,{x:0.55+9.1*paidPct/100,y:yOff+0.42,w:9.1*arPctC/100,h:0.16,fill:{color:"C8A030"}});
+    const fl=[`${paidPct}% paid — ${p.currency} ${fmt(paid)}`,ar>0?`AR: ${p.currency} ${fmt(ar)}`:null,`Outstanding: ${p.currency} ${fmt(remaining)}`,`Allocated: ${p.currency} ${fmt(allocated)}`].filter(Boolean).join("   |   ");
+    slide.addText(fl,{x:0.55,y:yOff+0.68,w:9.1,h:0.6,fontSize:9,color:"2C2C2C",wrap:true,fontFace:"Arial"});
+    yOff+=1.75;
+  }
+  slide.addText("DELIVERABLES",{x:0.4,y:yOff,w:7,h:0.25,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
+  slide.addText(`${done}/${total} completed`,{x:7.4,y:yOff,w:2.4,h:0.25,fontSize:9,color:"5B6770",align:"right",fontFace:"Arial"});
+  yOff+=0.3;
+  const tRows=[
+    [{text:"Deliverable",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Amount",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Billing",options:{bold:true,color:"5B6770",fontFace:"Arial"}}],
+    ...p.deliverables.map(d=>{
+      const b=d.billing||emptyBilling();const days=daysSince(b.sentDate);
+      const bStatus=b.paid?`Paid ${b.paidDate||""}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+      const bColor=b.paid?"1A6B50":b.invoiceSent?"7A6020":"5B6770";const st=d.status||"Not started";const stColor=st==="Done"?"1A6B50":st==="In progress"?"185FA5":"5B6770";
+      return [{text:d.name||"—",options:{color:d.done?"5B6770":"2C2C2C",strike:d.done,fontFace:"Arial"}},{text:st,options:{color:stColor,fontFace:"Arial"}},{text:d.amount?`${p.currency} ${fmt(d.amount)}`:"—",options:{color:"5B6770",fontFace:"Arial"}},{text:bStatus,options:{color:bColor,fontFace:"Arial"}}];
+    })
+  ];
+  if(tRows.length>1)slide.addTable(tRows,{x:0.4,y:yOff,w:9.4,colW:[3.8,1.6,1.8,2.2],fill:{color:"FFFFFF"},border:{color:"D6D9DB",pt:0.5},fontSize:10,color:"2C2C2C",fontFace:"Arial"});
+  slide.addText("Billing: 📋 Invoice prepared  ·  📤 Invoice sent  ·  💰 Payment received",{x:0.4,y:6.6,w:9.4,h:0.25,fontSize:8,color:"5B6770",fontFace:"Arial"});
+  slide.addText(`GREEN Engineering & Consulting · ${new Date().toLocaleDateString("en-GB")}`,{x:0.4,y:6.85,w:9.4,h:0.2,fontSize:8,color:"AABBBB",align:"right",fontFace:"Arial"});
+  prs.writeFile({fileName:`${p.name||"project"}_status.pptx`});
+};
+
+// ── Firebase ──────────────────────────────────────────────────────────────────
+onValue(dbRef,snapshot=>{
+  const data=snapshot.val();let loaded=[];
+  if(Array.isArray(data))loaded=data;
+  else if(data&&typeof data==="object")loaded=Object.values(data);
+  projects=loaded.map(p=>({...p,deliverables:Array.isArray(p.deliverables)?p.deliverables.map(d=>({...d,billing:d.billing||emptyBilling()})):[]}));
+  if(projects.length===0)projects=[emptyProject()];
+  renderAll();
+});
+onValue(summaryRef,snapshot=>{
+  const data=snapshot.val();
+  if(data)summary={planRub:data.planRub||"",rates:data.rates||{}};
+  renderSummary();
+});
+</script>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:Arial,sans-serif;background:#f5f6f7;color:#2c2c2c;padding:24px;min-height:100vh;}
+  input[type=text],input[type=number],input[type=date],select{font-family:Arial,sans-serif;font-size:13px;color:#2c2c2c;background:#fff;border:1px solid #d6d9db;border-radius:2px;padding:3px 8px;outline:none;}
+  input[type=text]:focus,input[type=number]:focus,select:focus{border-color:#34B78F;}
+  input[type=checkbox]{accent-color:#34B78F;cursor:pointer;width:14px;height:14px;}
+  .billing-panel{padding:0 10px 10px;display:none;}
+  .billing-panel.open{display:block;}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div style="background:#5B6770;padding:14px 24px;margin:-24px -24px 24px;border-bottom:3px solid #34B78F;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+  <div style="display:flex;align-items:center;gap:16px">
+    <!-- Logo SVG -->
+    <svg width="120" height="36" viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,18 10,6 20,18 10,30" fill="#34B78F"/>
+      <polygon points="12,18 22,6 32,18 22,30" fill="#34B78F" opacity="0.6"/>
+      <text x="38" y="23" font-family="Arial" font-size="18" font-weight="700" fill="#ffffff" letter-spacing="1">GREEN</text>
+      <text x="38" y="32" font-family="Arial" font-size="7" fill="rgba(255,255,255,0.6)" letter-spacing="1.5">ENGINEERING &amp; CONSULTING</text>
+    </svg>
+    <div style="border-left:1px solid rgba(255,255,255,0.2);padding-left:16px">
+      <div style="font-size:13px;font-weight:700;color:#fff">Project Status Board</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:1px">Weekly standup</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span style="font-size:11px;color:rgba(255,255,255,0.5)" id="syncStatus">Connecting…</span>
+    <div style="display:flex;gap:6px" id="ragSummary"></div>
+  </div>
+</div>
+
+<!-- Legend -->
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-size:11px;color:#5B6770">
+  <span>📋 Invoice prepared</span>
+  <span>📤 Invoice sent</span>
+  <span>💰 Payment received</span>
+  <span style="color:#d6d9db">|</span>
+  <span style="color:#1a6b50;font-weight:700">● On track</span>
+  <span style="color:#7a6020;font-weight:700">● At risk</span>
+  <span style="color:#8b2a1f;font-weight:700">● Issues</span>
+</div>
+
+<!-- API bar -->
+<div style="background:#fef9e7;border:1px solid #e8d8a0;border-radius:2px;padding:10px 16px;margin-bottom:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+  <label style="font-size:12px;color:#7a6020;font-weight:700">API key (optional, for PDF parsing):</label>
+  <input type="password" id="apiKey" placeholder="sk-ant-…" style="flex:1;min-width:200px;font-family:monospace;font-size:12px">
+  <button onclick="localStorage.setItem('green_api_key',document.getElementById('apiKey').value.trim())" style="font-size:12px;color:#fff;background:#34B78F;border:none;border-radius:2px;padding:4px 14px;cursor:pointer;font-family:Arial,sans-serif;font-weight:700">Save</button>
+  <span style="font-size:11px;color:#5B6770">Stored locally in your browser only</span>
+</div>
+
+<div id="summaryBlock"></div>
+
+<div class="grid" id="grid"><div style="padding:2rem;color:#5B6770;font-size:14px">Connecting to Firebase…</div></div>
+
+<div style="margin-top:14px;font-size:11px;color:#adb3b7;text-align:right">Data synced via Firebase · All team members see the same board · Export per project: PDF / PPTX</div>
+
+</body>
+</html>
