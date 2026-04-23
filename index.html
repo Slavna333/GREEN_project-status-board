@@ -267,7 +267,8 @@ function billingIcon(d) {
 
 function billingPanelHTML(d,pid) {
   const b=d.billing||emptyBilling();
-  const cur=(getProject(pid)||{}).currency||"USD";
+  const cur = (getProject(pid)||{}).currency || "USD";
+  const currentRate = cur !== "RUB" ? (summary.rates[cur] || "") : "";
   const sentDays=daysSince(b.sentDate);
   const paidDays=(b.sentDate&&b.paidDate)?Math.floor((new Date(b.paidDate)-new Date(b.sentDate))/86400000):null;
   const terms=num((getProject(pid)||{}).paymentDays)||30;
@@ -298,7 +299,9 @@ function billingPanelHTML(d,pid) {
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.paid?"checked":""} onchange="window.setBilling('${pid}','${d.id}','paid',this.checked)">
           <span style="font-weight:${b.paid?700:400};color:${b.paid?B.green:B.text}">Payment received</span>
         </label>
-        ${b.paid?`<input type="text" value="${b.paidDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','paidDate',this.value)">`:""} ${paidChip} ${paidBadge}
+        ${b.paid?`<input type="text" value="${b.paidDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','paidDate',this.value)">`:""} 
+        ${b.paid&&cur!=="RUB"?`<span style="font-size:11px;color:#5B6770;white-space:nowrap;margin-left:4px">Rate:</span><input type="number" value="${b.paidRate||currentRate}" placeholder="${currentRate||"rate"}" style="width:70px;font-size:11px;margin-left:4px" title="Rate at payment date" onchange="window.setBilling('${pid}','${d.id}','paidRate',this.value)">`:""} 
+        ${paidChip} ${paidBadge}
       </div>
     </div>
   </div>`;
