@@ -148,7 +148,7 @@ function renderSummary() {
   const base = planRub>0 ? planRub : totalCv;
   const vizHTML = allConverted&&base>0 ? `
     <tr style="background:${B.white}">
-      <td colspan="7" style="padding:10px 12px 14px">
+      <td colspan="8" style="padding:10px 12px 14px">
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="flex:1;min-width:200px">
             <div style="display:flex;justify-content:space-between;font-size:10px;color:${B.textLight};margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
@@ -441,7 +441,7 @@ window.toggleBilling = (pid,did)=>{const p=getProject(pid);const d=p.deliverable
 window.setBilling    = (pid,did,f,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).billing[f]=v;});
 window.setDelAmount  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).amount=v;});
 window.setDelName    = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).name=v;});
-window.setDelPlanRub  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).planRubYear=v;});
+window.setDelThisYear = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).thisYear=v;});
 window.setPlan       = v=>{summary.planRub=v;saveSummary();renderSummary();};
 window.setRate       = (cur,v)=>{summary.rates[cur]=v;saveSummary();renderSummary();};
 
