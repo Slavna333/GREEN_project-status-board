@@ -168,43 +168,7 @@ function renderSummary() {
 
   // доnut + progress bar vs dept plan
   const towardPlan = planRub > 0 ? Math.max(0, planRub - deptYTD - deptAR) : 0;
-  const donutViz = planRub>0&&allOk ? (()=>{
-    const base = planRub;
-    const ytdA = Math.min(deptYTD/base, 1);
-    const arA  = Math.min(deptAR/base,  1-ytdA);
-    const remA = Math.min(towardPlan/base, 1-ytdA-arA);
-    const r=52, cx=60, cy=60;
-    function slice(start, end, color) {
-      if(end-start < 0.001) return "";
-      const a1=start*2*Math.PI-Math.PI/2, a2=end*2*Math.PI-Math.PI/2;
-      const x1=cx+r*Math.cos(a1), y1=cy+r*Math.sin(a1);
-      const x2=cx+r*Math.cos(a2), y2=cy+r*Math.sin(a2);
-      const large=end-start>0.5?1:0;
-      return `<path d="M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${color}"/>`;
-    }
-    const bg=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${B.border}"/>`;
-    const s1=slice(0, ytdA, B.green);
-    const s2=slice(ytdA, ytdA+arA, "#c8a030");
-    const s3=slice(ytdA+arA, ytdA+arA+remA, B.gray25);
-    const inner=`<circle cx="${cx}" cy="${cy}" r="34" fill="${B.white}"/>`;
-    const pct=Math.round(deptYTD/base*100);
-    const pctColor=pct>=70?"#1a6b50":pct>=40?"#7a6020":"#8b2a1f";
-    const label=`<text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="15" font-weight="700" font-family="Arial" fill="${pctColor}">${pct}%</text><text x="${cx}" y="${cy+11}" text-anchor="middle" font-size="8" font-family="Arial" fill="${B.textLight}">of plan</text>`;
-    return `<svg width="120" height="120" viewBox="0 0 120 120">${bg}${s1}${s2}${s3}${inner}${label}</svg>`;
-  })() : "";
 
-  const barYTD = planRub>0 ? Math.min(100, Math.round(deptYTD/planRub*100)) : 0;
-  const barAR  = planRub>0 ? Math.min(100-barYTD, Math.round(deptAR/planRub*100)) : 0;
-  const barRem = planRub>0 ? Math.min(100-barYTD-barAR, Math.round(towardPlan/planRub*100)) : 0;
-
-  const progressBar = planRub>0&&allOk ? `
-    <div style="margin-bottom:6px">
-      <div style="height:10px;background:${B.border};border-radius:2px;overflow:hidden;display:flex">
-        <div style="width:${barYTD}%;background:${B.green};transition:width .3s"></div>
-        <div style="width:${barAR}%;background:#c8a030;transition:width .3s"></div>
-        <div style="width:${barRem}%;background:${B.gray25};transition:width .3s"></div>
-      </div>
-    </div>` : "";
 
   const donutLegend = planRub>0&&allOk ? `
     <div style="display:flex;flex-direction:column;gap:6px;justify-content:center">
@@ -218,9 +182,11 @@ function renderSummary() {
     <tr style="background:${B.white}">
       <td colspan="7" style="padding:10px 16px 16px">
         ${progressBar}
-        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-top:8px">
-          ${donutViz}
-          ${donutLegend}
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:11px">
+          <span style="display:flex;align-items:center;gap:5px;color:#1a6b50"><span style="width:10px;height:10px;background:${B.green};border-radius:2px;display:inline-block"></span><b>${fmtM(deptYTD)} M</b> collected</span>
+          ${deptAR>0?`<span style="display:flex;align-items:center;gap:5px;color:#7a6020"><span style="width:10px;height:10px;background:#c8a030;border-radius:2px;display:inline-block"></span><b>${fmtM(deptAR)} M</b> AR</span>`:""}
+          <span style="display:flex;align-items:center;gap:5px;color:${B.textLight}"><span style="width:10px;height:10px;background:${B.gray25};border-radius:2px;display:inline-block"></span><b>${fmtM(towardPlan)} M</b> to plan</span>
+          <span style="display:flex;align-items:center;gap:5px;color:${B.textLight}">Dept plan: <b style="color:${B.text}">${fmtM(planRub)} M</b></span>
         </div>
       </td>
     </tr>` : "";
