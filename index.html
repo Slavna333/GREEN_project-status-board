@@ -42,7 +42,7 @@ let saving   = false;
 const fmt  = n => (n==null||n==="") ? "" : Number(n).toLocaleString("en-US");
 const fmtM = n => (n==null||isNaN(n)) ? "—" : (n/1000000).toFixed(2);
 const num  = v => parseFloat(v)||0;
-const esc  = s => (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+const esc  = s => (s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/'/g,"&#39;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const uid  = ()  => Date.now()+"_"+Math.random().toString(36).slice(2);
 
 function daysSince(d) { if(!d) return null; return Math.floor((Date.now()-new Date(d).getTime())/86400000); }
@@ -51,9 +51,17 @@ function emptyDel(name="") { return {id:uid(),name,done:false,amount:"",billing:
 function emptyProject() { return {id:uid(),name:"",client:"",rag:"green",contractValue:"",currency:"USD",paymentDays:"",yearPlanRub:"",deliverables:[]}; }
 function getProject(id) { return projects.find(p=>p.id===id); }
 
+let pendingSave = false;
 function saveToFirebase() {
-  if(saving) return; saving=true;
-  set(dbRef,projects).then(()=>{saving=false;}).catch(()=>{saving=false;});
+  if(saving) { pendingSave = true; return; }
+  saving=true;
+  set(dbRef,projects).then(()=>{
+    saving=false;
+    if(pendingSave) { pendingSave=false; saveToFirebase(); }
+  }).catch(()=>{
+    saving=false;
+    if(pendingSave) { pendingSave=false; saveToFirebase(); }
+  });
 }
 function saveSummary() { set(summaryRef,summary).catch(()=>{}); }
 function updateProject(id,fn) { const p=getProject(id); fn(p); saveToFirebase(); renderAll(); }
@@ -169,27 +177,65 @@ function renderSummary() {
   // доnut + progress bar vs dept plan
   const towardPlan = planRub > 0 ? Math.max(0, planRub - deptYTD - deptAR) : 0;
 
-
-  const donutLegend = planRub>0&&allOk ? `
-    <div style="display:flex;flex-direction:column;gap:6px;justify-content:center">
-      <div style="font-size:11px;color:#1a6b50;display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;background:${B.green};border-radius:2px;display:inline-block;flex-shrink:0"></span><b>${fmtM(deptYTD)} M</b> collected</div>
-      ${deptAR>0?`<div style="font-size:11px;color:#7a6020;display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;background:#c8a030;border-radius:2px;display:inline-block;flex-shrink:0"></span><b>${fmtM(deptAR)} M</b> AR</div>`:""}
-      <div style="font-size:11px;color:${B.textLight};display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;background:${B.gray25};border-radius:2px;display:inline-block;flex-shrink:0"></span><b>${fmtM(towardPlan)} M</b> to plan</div>
-      <div style="font-size:10px;color:${B.textLight};margin-top:2px;padding-top:6px;border-top:1px solid ${B.border}">Dept plan: <b style="color:${B.text}">${fmtM(planRub)} M</b></div>
-    </div>` : "";
-
-  const vizRow = planRub>0&&allOk ? `
-    <tr style="background:${B.white}">
-      <td colspan="7" style="padding:10px 16px 16px">
-        ${progressBar}
-        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:11px">
-          <span style="display:flex;align-items:center;gap:5px;color:#1a6b50"><span style="width:10px;height:10px;background:${B.green};border-radius:2px;display:inline-block"></span><b>${fmtM(deptYTD)} M</b> collected</span>
-          ${deptAR>0?`<span style="display:flex;align-items:center;gap:5px;color:#7a6020"><span style="width:10px;height:10px;background:#c8a030;border-radius:2px;display:inline-block"></span><b>${fmtM(deptAR)} M</b> AR</span>`:""}
-          <span style="display:flex;align-items:center;gap:5px;color:${B.textLight}"><span style="width:10px;height:10px;background:${B.gray25};border-radius:2px;display:inline-block"></span><b>${fmtM(towardPlan)} M</b> to plan</span>
-          <span style="display:flex;align-items:center;gap:5px;color:${B.textLight}">Dept plan: <b style="color:${B.text}">${fmtM(planRub)} M</b></span>
+  // Plan-progress footer: YTD collected / AR / remaining to plan, with money and %
+  const planProgressFooter = planRub>0&&allOk ? (()=>{
+    const ytdPctRaw = deptYTD/planRub*100;
+    const arPctRaw  = deptAR/planRub*100;
+    const remPctRaw = towardPlan/planRub*100;
+    // Display % (rounded, may exceed 100 if overperformance)
+    const ytdPct = Math.round(ytdPctRaw);
+    const arPct  = Math.round(arPctRaw);
+    const remPct = Math.max(0, Math.round(remPctRaw));
+    // Bar widths (clamped so total never exceeds 100% of bar)
+    const barYTD = Math.min(100, ytdPctRaw);
+    const barAR  = Math.min(Math.max(0,100-barYTD), arPctRaw);
+    const barRem = Math.max(0, 100 - barYTD - barAR);
+    const ytdColor = ytdPct>=70?"#1a6b50":ytdPct>=40?"#7a6020":"#8b2a1f";
+    return `
+      <div style="padding:14px 16px 16px;background:${B.white};border-top:1px solid ${B.border}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:10px;color:${B.textLight};font-weight:700;letter-spacing:.08em;text-transform:uppercase">Progress vs department plan</span>
+          <span style="font-size:11px;color:${B.textLight}">Dept plan: <b style="color:${B.text}">${fmtM(planRub)} M RUB</b></span>
         </div>
-      </td>
-    </tr>` : "";
+        <div style="height:22px;background:${B.border};border-radius:3px;overflow:hidden;display:flex;margin-bottom:10px">
+          <div style="width:${barYTD}%;background:${B.green};display:flex;align-items:center;justify-content:center;transition:width .3s">
+            ${barYTD>=8?`<span style="font-size:10px;font-weight:700;color:${B.white}">${ytdPct}%</span>`:""}
+          </div>
+          <div style="width:${barAR}%;background:#c8a030;display:flex;align-items:center;justify-content:center;transition:width .3s">
+            ${barAR>=8?`<span style="font-size:10px;font-weight:700;color:${B.white}">${arPct}%</span>`:""}
+          </div>
+          <div style="width:${barRem}%;background:${B.gray25};display:flex;align-items:center;justify-content:center;transition:width .3s">
+            ${barRem>=8?`<span style="font-size:10px;font-weight:700;color:${B.textLight}">${remPct}%</span>`:""}
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+          <div style="padding:8px 10px;background:${B.green15};border-left:3px solid ${B.green};border-radius:2px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#1a6b50;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">
+              <span style="width:8px;height:8px;background:${B.green};border-radius:2px;display:inline-block"></span>Collected YTD
+            </div>
+            <div style="font-size:16px;font-weight:700;color:${ytdColor};line-height:1.1">${fmtM(deptYTD)} M</div>
+            <div style="font-size:11px;color:${B.textLight};margin-top:2px"><b style="color:${ytdColor}">${ytdPct}%</b> of plan</div>
+          </div>
+          <div style="padding:8px 10px;background:#fef9e7;border-left:3px solid #c8a030;border-radius:2px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#7a6020;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">
+              <span style="width:8px;height:8px;background:#c8a030;border-radius:2px;display:inline-block"></span>AR against plan
+            </div>
+            <div style="font-size:16px;font-weight:700;color:#7a6020;line-height:1.1">${fmtM(deptAR)} M</div>
+            <div style="font-size:11px;color:${B.textLight};margin-top:2px"><b style="color:#7a6020">${arPct}%</b> of plan</div>
+          </div>
+          <div style="padding:8px 10px;background:${B.gray15};border-left:3px solid ${B.gray50};border-radius:2px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:${B.textLight};font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">
+              <span style="width:8px;height:8px;background:${B.gray25};border-radius:2px;display:inline-block"></span>Remaining to plan
+            </div>
+            <div style="font-size:16px;font-weight:700;color:${B.text};line-height:1.1">${fmtM(towardPlan)} M</div>
+            <div style="font-size:11px;color:${B.textLight};margin-top:2px"><b style="color:${B.text}">${remPct}%</b> of plan</div>
+          </div>
+        </div>
+      </div>`;
+  })() : (planRub>0&&!allOk ? `
+      <div style="padding:10px 16px;background:${B.gray15};border-top:1px solid ${B.border};font-size:11px;color:${B.textLight}">
+        Plan progress unavailable — some projects are missing an exchange rate.
+      </div>` : "");
 
   const totalRow=`
     <tr style="background:${B.green15};border-top:2px solid ${B.green}">
@@ -204,8 +250,7 @@ function renderSummary() {
       </td>
       <td style="padding:8px 12px;font-size:13px;color:#7a6020;font-weight:700;text-align:right">${allOk?`${fmtM(deptAR)} M`:"—"}</td>
       <td style="padding:8px 12px;font-size:13px;color:${B.textLight};font-weight:700;text-align:right">${allOk?`${fmtM(deptRemain)} M`:"—"}</td>
-    </tr>
-    ${vizRow}`;
+    </tr>`;
 
   document.getElementById("summaryBlock").innerHTML=`
     <div style="background:${B.white};border:1px solid ${B.border};border-radius:4px;margin-bottom:24px;overflow:hidden">
@@ -240,6 +285,7 @@ function renderSummary() {
         ${!allOk?`<div style="font-size:10px;color:${B.gray50};margin-top:6px">* Some projects missing exchange rate</div>`:""}
         ${!summary.fyStart?`<div style="font-size:10px;color:#7a6020;margin-top:4px">⚠ Set fiscal year dates above to enable YTD calculation</div>`:""}
       </div>
+      ${planProgressFooter}
     </div>`;
 }
 
@@ -299,7 +345,7 @@ function billingPanelHTML(d,pid) {
       return `<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;${s}">${sentDays}d</span>
               <div style="font-size:11px;font-style:italic;margin-top:2px;color:${sentDays>terms?"#8b2a1f":sentDays>warn?"#7a6020":B.textLight}">${h}</div>`;
     })():"";
-  const paidChip=(b.paid&&paidDays!==null)?`<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;background:#e8f8f3;color:#1a6b50">Paid in ${paidDays}d</span>`:(b.paid?`<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;background:#e8f8f3;color:#1a6b50">Paid</span>`:"")
+  const paidChip=(b.paid&&paidDays!==null)?`<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;background:#e8f8f3;color:#1a6b50">Paid in ${paidDays}d</span>`:(b.paid?`<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;background:#e8f8f3;color:#1a6b50">Paid</span>`:"");
   const missingDateWarn=b.paid&&!b.paidDate?`<span style="font-size:11px;color:#8b2a1f;font-weight:600">⚠ Enter payment date for YTD tracking</span>`:"";
   const inFYbadge=b.paid&&b.paidDate?(inFY(b.paidDate)?`<span style="font-size:10px;background:${B.green15};color:#1a6b50;border-radius:2px;padding:1px 6px">In FY</span>`:`<span style="font-size:10px;background:${B.gray15};color:${B.textLight};border-radius:2px;padding:1px 6px">Out of FY</span>`):"";
 
@@ -363,7 +409,7 @@ function deliverableHTML(d,pid) {
 }
 
 function deliverablesHTML(p) {
-  const done=p.deliverables.filter(d=>d.done).length;
+  const done=p.deliverables.filter(d=>(d.status||"Not started")==="Done").length;
   const paid=p.deliverables.filter(d=>d.billing?.paid).length;
   const pct=p.deliverables.length?Math.round(done/p.deliverables.length*100):0;
   return `<div>
@@ -456,7 +502,6 @@ window.setDelStatus  = (pid,did,v)=>updateProject(pid,p=>{const d=p.deliverables
 window.setBilling    = (pid,did,f,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).billing[f]=v;});
 window.setDelAmount  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).amount=v;});
 window.setDelName    = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).name=v;});
-window.setDelStatus  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).status=v;});
 window.setPlan       = v=>{summary.planRub=v;saveSummary();renderSummary();};
 window.setRate       = (cur,v)=>{summary.rates[cur]=v;saveSummary();renderSummary();};
 window.setFY         = (part,v)=>{summary[part==="start"?"fyStart":"fyEnd"]=v;saveSummary();renderSummary();};
@@ -486,17 +531,18 @@ window.handleUpload=async(pid,input)=>{
 // ── Export PDF (project) ──────────────────────────────────────────────────────
 window.exportPDF=pid=>{
   const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC}=calcFin(p);const r=RAG[p.rag];
-  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;
+  const done=p.deliverables.filter(d=>(d.status||"Not started")==="Done").length;const total=p.deliverables.length;
   const rows=p.deliverables.map(d=>{
     const b=d.billing||emptyBilling();const days=daysSince(b.sentDate);const terms=num(p.paymentDays)||30;
-    const bStatus=b.paid?`Paid ${b.paidDate||"⚠ no date"}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+    const isDone=(d.status||"Not started")==="Done";
+    const bStatus=b.paid?`Paid ${b.paidDate||"⚠ no date"}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":isDone?"No invoice":"—";
     const bColor=b.paid?"#1a6b50":(b.invoiceSent&&days>terms)?"#8b2a1f":b.invoiceSent?"#7a6020":"#5B6770";
     const icon=b.paid?"💰":b.invoiceSent?"📤":b.invoiceReady?"📋":"";
     const st=d.status||"Not started";const stColor=st==="Done"?"#1a6b50":st==="In progress"?"#185fa5":"#5B6770";
     const stBg=st==="Done"?"#e8f8f3":st==="In progress"?"#d8eaf5":"#eceef0";
     const fyTag=b.paid&&b.paidDate?(inFY(b.paidDate)?'<span style="font-size:9px;background:#e5f6f2;color:#1a6b50;padding:1px 5px;border-radius:2px;margin-left:4px">In FY</span>':''):"";
     return `<tr style="border-bottom:1px solid #d6d9db">
-      <td style="padding:7px 10px;font-size:12px;color:${d.done?"#5B6770":"#2c2c2c"};text-decoration:${d.done?"line-through":"none"}">${d.name||"—"}</td>
+      <td style="padding:7px 10px;font-size:12px;color:${isDone?"#5B6770":"#2c2c2c"};text-decoration:${isDone?"line-through":"none"}">${d.name||"—"}</td>
       <td style="padding:7px 10px;text-align:center"><span style="background:${stBg};color:${stColor};font-size:10px;font-weight:700;padding:2px 8px;border-radius:2px">${st}</span></td>
       <td style="padding:7px 10px;font-size:12px;color:#5B6770;text-align:right">${d.amount?p.currency+" "+fmt(d.amount):"—"}</td>
       <td style="padding:7px 10px;font-size:12px;color:${bColor}">${icon} ${bStatus}${fyTag}</td>
@@ -540,7 +586,7 @@ window.exportPDF=pid=>{
 window.exportPPTX=pid=>{
   const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC}=calcFin(p);const r=RAG[p.rag];
   const ragHex=r.text.replace("#","");const ragBgHex=r.bg.replace("#","");
-  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;
+  const done=p.deliverables.filter(d=>(d.status||"Not started")==="Done").length;const total=p.deliverables.length;
   const prs=new PptxGenJS();prs.layout="LAYOUT_WIDE";const slide=prs.addSlide();slide.background={color:"ffffff"};
   slide.addShape(prs.ShapeType.rect,{x:0,y:0,w:"100%",h:1.2,fill:{color:"5B6770"}});
   slide.addShape(prs.ShapeType.rect,{x:0,y:1.15,w:"100%",h:0.05,fill:{color:"34B78F"}});
@@ -568,10 +614,11 @@ window.exportPPTX=pid=>{
     [{text:"Deliverable",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Amount",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Billing",options:{bold:true,color:"5B6770",fontFace:"Arial"}}],
     ...p.deliverables.map(d=>{
       const b=d.billing||emptyBilling();const days=daysSince(b.sentDate);
-      const bStatus=b.paid?`Paid ${b.paidDate||"⚠"}${inFY(b.paidDate)?" [FY]":""}`:b.invoiceSent?`Sent (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+      const isDone=(d.status||"Not started")==="Done";
+      const bStatus=b.paid?`Paid ${b.paidDate||"⚠"}${b.paidDate&&inFY(b.paidDate)?" [FY]":""}`:b.invoiceSent?`Sent (${days}d)`:b.invoiceReady?"Invoice ready":isDone?"No invoice":"—";
       const bColor=b.paid?"1A6B50":b.invoiceSent?"7A6020":"5B6770";
       const st=d.status||"Not started";const stColor=st==="Done"?"1A6B50":st==="In progress"?"185FA5":"5B6770";
-      return [{text:d.name||"—",options:{color:d.done?"5B6770":"2C2C2C",strike:d.done,fontFace:"Arial"}},{text:st,options:{color:stColor,fontFace:"Arial"}},{text:d.amount?`${p.currency} ${fmt(d.amount)}`:"—",options:{color:"5B6770",fontFace:"Arial"}},{text:bStatus,options:{color:bColor,fontFace:"Arial"}}];
+      return [{text:d.name||"—",options:{color:isDone?"5B6770":"2C2C2C",strike:isDone,fontFace:"Arial"}},{text:st,options:{color:stColor,fontFace:"Arial"}},{text:d.amount?`${p.currency} ${fmt(d.amount)}`:"—",options:{color:"5B6770",fontFace:"Arial"}},{text:bStatus,options:{color:bColor,fontFace:"Arial"}}];
     })
   ];
   if(tRows.length>1)slide.addTable(tRows,{x:0.4,y:yOff,w:9.4,colW:[3.8,1.6,1.8,2.2],fill:{color:"FFFFFF"},border:{color:"D6D9DB",pt:0.5},fontSize:10,color:"2C2C2C",fontFace:"Arial"});
