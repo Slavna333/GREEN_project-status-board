@@ -20,48 +20,35 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-const dbRef = ref(db, "psb/projects");
+const db  = getDatabase(app);
+const dbRef      = ref(db, "psb/projects");
 const summaryRef = ref(db, "psb/summary");
 
-// ── Brand colors ──────────────────────────────────────────────────────────────
 const B = {
-  green:     "#34B78F",
-  green85:   "#4ec49d",
-  green50:   "#9adbca",
-  green25:   "#cdeee6",
-  green15:   "#e5f6f2",
-  gray:      "#5B6770",
-  gray85:    "#6d7980",
-  gray50:    "#adb3b7",
-  gray25:    "#d6d9db",
-  gray15:    "#eceef0",
-  white:     "#ffffff",
-  text:      "#2c2c2c",
-  textLight: "#5B6770",
-  border:    "#d6d9db",
-  bg:        "#f5f6f7",
+  green:"#34B78F", green15:"#e5f6f2", green25:"#cdeee6",
+  gray:"#5B6770",  gray15:"#eceef0",  gray25:"#d6d9db",  gray50:"#adb3b7",
+  white:"#ffffff", text:"#2c2c2c",    textLight:"#5B6770", border:"#d6d9db", bg:"#f5f6f7",
 };
-
 const RAG = {
-  green:  { bg:"#e8f8f3", text:"#1a6b50", dot:B.green,  label:"On track" },
-  yellow: { bg:"#fef9e7", text:"#7a6020", dot:"#c8a030", label:"At risk"  },
-  red:    { bg:"#fdf0ef", text:"#8b2a1f", dot:"#d9534f", label:"Issues"   }
+  green:  {bg:"#e8f8f3", text:"#1a6b50", dot:B.green,   label:"On track"},
+  yellow: {bg:"#fef9e7", text:"#7a6020", dot:"#c8a030", label:"At risk"},
+  red:    {bg:"#fdf0ef", text:"#8b2a1f", dot:"#d9534f", label:"Issues"},
 };
 
 let projects = [];
-let summary = { planRub: "", rates: {} };
-let saving = false;
+let summary  = {planRub:"", fyStart:"", fyEnd:"", rates:{}};
+let saving   = false;
 
-function fmt(n) { return (n==null||n==="") ? "" : Number(n).toLocaleString("en-US"); }
-function fmtM(n) { return (n==null||isNaN(n)) ? "—" : (n/1000000).toFixed(2); }
-function num(v) { return parseFloat(v)||0; }
+const fmt  = n => (n==null||n==="") ? "" : Number(n).toLocaleString("en-US");
+const fmtM = n => (n==null||isNaN(n)) ? "—" : (n/1000000).toFixed(2);
+const num  = v => parseFloat(v)||0;
+const esc  = s => (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+const uid  = ()  => Date.now()+"_"+Math.random().toString(36).slice(2);
+
 function daysSince(d) { if(!d) return null; return Math.floor((Date.now()-new Date(d).getTime())/86400000); }
-function uid() { return Date.now()+"_"+Math.random().toString(36).slice(2); }
 function emptyBilling() { return {invoiceReady:false,invoiceSent:false,sentDate:"",clientFeedback:false,paid:false,paidDate:"",paidRate:""}; }
-function emptyDel(name="") { return {id:uid(),name,done:false,amount:"",thisYear:false,billing:emptyBilling()}; }
-function emptyProject() { return {id:uid(),name:"",client:"",rag:"green",contractValue:"",currency:"USD",paymentDays:"",deliverables:[]}; }
-function esc(s) { return (s||"").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function emptyDel(name="") { return {id:uid(),name,done:false,amount:"",billing:emptyBilling()}; }
+function emptyProject() { return {id:uid(),name:"",client:"",rag:"green",contractValue:"",currency:"USD",paymentDays:"",yearPlanRub:"",deliverables:[]}; }
 function getProject(id) { return projects.find(p=>p.id===id); }
 
 function saveToFirebase() {
@@ -71,7 +58,15 @@ function saveToFirebase() {
 function saveSummary() { set(summaryRef,summary).catch(()=>{}); }
 function updateProject(id,fn) { const p=getProject(id); fn(p); saveToFirebase(); renderAll(); }
 
-// ── Finances ──────────────────────────────────────────────────────────────────
+// ── Fiscal year helpers ───────────────────────────────────────────────────────
+function inFY(dateStr) {
+  if(!dateStr||!summary.fyStart||!summary.fyEnd) return false;
+  const d=new Date(dateStr), s=new Date(summary.fyStart), e=new Date(summary.fyEnd);
+  e.setHours(23,59,59);
+  return d>=s && d<=e;
+}
+
+// ── Finance calculations ──────────────────────────────────────────────────────
 function getRate(p) { return p.currency==="RUB"?1:num(summary.rates[p.currency]); }
 
 function calcFin(p) {
@@ -85,126 +80,141 @@ function calcFin(p) {
   return {cv,paid,ar,remaining,paidPct,arPctC,arPctR};
 }
 
-// RUB conversion: paid uses locked rate, AR/outstanding use current rate
 function calcFinRub(p) {
   const currentRate=getRate(p);
-  const paidRub=p.deliverables.filter(d=>d.billing?.paid).reduce((s,d)=>{
-    const lockedRate=num(d.billing.paidRate)||currentRate;
-    return s+num(d.amount)*lockedRate;
+  // total collected (all time) — uses locked rate per payment
+  const collectedTotal=p.deliverables.filter(d=>d.billing?.paid).reduce((s,d)=>{
+    const r=num(d.billing.paidRate)||currentRate;
+    return s+num(d.amount)*r;
+  },0);
+  // YTD collected — only payments within fiscal year, uses locked rate
+  const collectedYTD=p.deliverables.filter(d=>d.billing?.paid&&inFY(d.billing.paidDate)).reduce((s,d)=>{
+    const r=num(d.billing.paidRate)||currentRate;
+    return s+num(d.amount)*r;
   },0);
   const arRub=p.deliverables.filter(d=>d.billing?.invoiceSent&&!d.billing?.paid).reduce((s,d)=>s+num(d.amount)*currentRate,0);
-  const {cv,remaining}=calcFin(p);
+  const {remaining}=calcFin(p);
   const remainRub=remaining*currentRate;
-  const cvRub=currentRate>0?(paidRub+arRub+remainRub):null;
-  return {paidRub,arRub,remainRub,cvRub,hasRate:p.currency==="RUB"||currentRate>0};
+  const hasRate=p.currency==="RUB"||currentRate>0;
+  // warning: paid but no paidDate
+  const missingDate=p.deliverables.filter(d=>d.billing?.paid&&!d.billing?.paidDate).length;
+  return {collectedTotal,collectedYTD,arRub,remainRub,hasRate,missingDate};
 }
 
-// ── Summary ───────────────────────────────────────────────────────────────────
+// ── Summary render ────────────────────────────────────────────────────────────
 function renderSummary() {
   const usedCurrencies=[...new Set(["USD",...projects.map(p=>p.currency).filter(Boolean)])].filter(c=>c!=="RUB");
-  const ratesHTML=usedCurrencies.length?`
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:${B.gray15};border-radius:4px">
-      <span style="font-size:11px;color:${B.textLight};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Exchange rates to RUB:</span>
-      ${usedCurrencies.map(c=>`<div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:12px;color:${B.text};font-weight:700">${c}:</span>
-        <input type="number" placeholder="0" value="${summary.rates[c]||""}" style="width:72px;font-size:12px" onchange="window.setRate('${c}',this.value)">
-      </div>`).join("")}
-    </div>`:"";;
+
+  const settingsHTML=`
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:${B.gray15};border-radius:4px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:11px;color:${B.textLight};font-weight:700;text-transform:uppercase;letter-spacing:.06em">Fiscal year:</span>
+        <input type="date" value="${summary.fyStart||""}" style="font-size:12px;width:130px" onchange="window.setFY('start',this.value)">
+        <span style="font-size:11px;color:${B.textLight}">—</span>
+        <input type="date" value="${summary.fyEnd||""}" style="font-size:12px;width:130px" onchange="window.setFY('end',this.value)">
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:${B.textLight};font-weight:700;text-transform:uppercase;letter-spacing:.06em">Rates to RUB:</span>
+        ${usedCurrencies.map(c=>`<div style="display:flex;align-items:center;gap:5px">
+          <span style="font-size:12px;color:${B.text};font-weight:700">${c}:</span>
+          <input type="number" placeholder="0" value="${summary.rates[c]||""}" style="width:72px;font-size:12px" onchange="window.setRate('${c}',this.value)">
+        </div>`).join("")}
+      </div>
+    </div>`;
+
+  // per-project rows
+  let deptYTD=0, deptYearPlan=0, deptAR=0, deptRemain=0, allOk=true;
 
   const rows=projects.map(p=>{
     const r=RAG[p.rag];
-    const {paidRub,arRub,remainRub,cvRub,hasRate}=calcFinRub(p);
-    const {cv}=calcFin(p);
-    const currentRate=getRate(p);
-    const yearPlan=p.deliverables.filter(d=>d.thisYear).reduce((s,d)=>s+num(d.amount)*currentRate,0);
-    const yearPct=yearPlan>0&&hasRate?Math.round(paidRub/yearPlan*100):null;
-    const yearColor=yearPct===null?"":yearPct>=70?"#1a6b50":yearPct>=40?"#7a6020":"#8b2a1f";
+    const {collectedYTD,arRub,remainRub,hasRate,missingDate}=calcFinRub(p);
+    const yearPlan=num(p.yearPlanRub)*1000000;
+    const ytdPct=yearPlan>0&&hasRate?Math.min(999,Math.round(collectedYTD/yearPlan*100)):null;
+    const pctColor=ytdPct===null?"":ytdPct>=100?"#1a6b50":ytdPct>=70?"#1a6b50":ytdPct>=40?"#7a6020":"#8b2a1f";
+    const warn=missingDate>0?`<span title="${missingDate} paid deliverable(s) missing payment date — not counted in YTD" style="color:#8b2a1f;font-size:11px;margin-left:4px">⚠</span>`:"";
+
+    if(!hasRate) allOk=false;
+    if(hasRate) { deptYTD+=collectedYTD; deptAR+=arRub; deptRemain+=remainRub; }
+    deptYearPlan+=yearPlan;
+
     return `<tr style="border-bottom:1px solid ${B.border}">
-      <td style="padding:8px 12px;font-size:12px;font-weight:600;color:${B.text}">${p.name||"—"}</td>
-      <td style="padding:8px 12px;text-align:center"><span style="background:${r.bg};color:${r.text};font-size:10px;font-weight:700;padding:2px 10px;border-radius:2px;letter-spacing:.04em;text-transform:uppercase">${r.label}</span></td>
-      <td style="padding:8px 12px;font-size:11px;color:${B.textLight};text-align:right">${p.currency} ${fmt(cv)}</td>
-      <td style="padding:8px 12px;font-size:12px;color:#1a6b50;font-weight:600;text-align:right">${hasRate?fmtM(paidRub):"—"}</td>
-      <td style="padding:8px 12px;font-size:12px;color:#7a6020;font-weight:600;text-align:right">${hasRate?fmtM(arRub):"—"}</td>
-      <td style="padding:8px 12px;font-size:12px;color:${B.text};text-align:right">${hasRate?fmtM(remainRub):"—"}</td>
-      <td style="padding:8px 12px;font-size:12px;color:${B.text};font-weight:600;text-align:right">${cvRub!==null?fmtM(cvRub):`<span style="font-size:10px;color:${B.gray50}">no rate</span>`}</td>
-      <td style="padding:8px 12px;font-size:12px;text-align:right">
-        ${yearPlan>0?`<span style="color:${B.textLight}">${fmtM(yearPlan)} M</span>${yearPct!==null?`<br><span style="font-size:11px;font-weight:700;color:${yearColor}">${yearPct}%</span>`:""}`:
+      <td style="padding:8px 12px;font-size:12px;font-weight:600;color:${B.text}">${p.name||"—"}${warn}</td>
+      <td style="padding:8px 12px;text-align:center">
+        <span style="background:${r.bg};color:${r.text};font-size:10px;font-weight:700;padding:2px 10px;border-radius:2px;text-transform:uppercase;letter-spacing:.04em">${r.label}</span>
+      </td>
+      <td style="padding:8px 12px;font-size:12px;text-align:right;color:${B.textLight}">
+        ${yearPlan>0?`<b style="color:${B.text}">${fmtM(yearPlan)}</b> M`:
         `<span style="font-size:10px;color:${B.gray50}">—</span>`}
       </td>
+      <td style="padding:8px 12px;font-size:12px;color:#1a6b50;font-weight:600;text-align:right">
+        ${hasRate?`${fmtM(collectedYTD)} M`:"—"}
+      </td>
+      <td style="padding:8px 12px;text-align:right">
+        ${ytdPct!==null?`<span style="font-size:13px;font-weight:700;color:${pctColor}">${ytdPct}%</span>`:
+        yearPlan>0&&!hasRate?`<span style="font-size:10px;color:${B.gray50}">no rate</span>`:`<span style="font-size:10px;color:${B.gray50}">—</span>`}
+      </td>
+      <td style="padding:8px 12px;font-size:12px;color:#7a6020;font-weight:500;text-align:right">${hasRate?`${fmtM(arRub)} M`:"—"}</td>
+      <td style="padding:8px 12px;font-size:12px;color:${B.textLight};text-align:right">${hasRate?`${fmtM(remainRub)} M`:"—"}</td>
     </tr>`;
   }).join("");
 
-  let totalPaid=0,totalAr=0,totalRemain=0,totalCv=0,allConverted=true;
-  projects.forEach(p=>{
-    const {paidRub,arRub,remainRub,cvRub,hasRate}=calcFinRub(p);
-    if(!hasRate){allConverted=false;return;}
-    totalPaid+=paidRub; totalAr+=arRub; totalRemain+=remainRub; totalCv+=(cvRub||0);
-  });
-
+  // totals
   const planRub=num(summary.planRub)*1000000;
-  // Визуализация для department total
-  const collectedPct = planRub>0&&allConverted ? Math.min(100,Math.round(totalPaid/planRub*100)) : (allConverted&&totalCv>0 ? Math.round(totalPaid/totalCv*100) : 0);
-  const arPctViz     = planRub>0&&allConverted ? Math.min(100-collectedPct,Math.round(totalAr/planRub*100)) : (allConverted&&totalCv>0 ? Math.min(100-collectedPct,Math.round(totalAr/totalCv*100)) : 0);
-  const base = planRub>0 ? planRub : totalCv;
-  const vizHTML = allConverted&&base>0 ? `
+  const deptPct=deptYearPlan>0?Math.min(999,Math.round(deptYTD/deptYearPlan*100)):null;
+  const planPct=planRub>0?Math.min(999,Math.round(deptYTD/planRub*100)):null;
+  const deptPctColor=deptPct===null?"":deptPct>=100?"#1a6b50":deptPct>=70?"#1a6b50":deptPct>=40?"#7a6020":"#8b2a1f";
+  const planPctColor=planPct===null?"":planPct>=100?"#1a6b50":planPct>=70?"#1a6b50":planPct>=40?"#7a6020":"#8b2a1f";
+
+  // progress bar
+  const barBase=Math.max(planRub,deptYearPlan,deptYTD+deptAR+deptRemain,1);
+  const barYTD=Math.min(100,Math.round(deptYTD/barBase*100));
+  const barAR=Math.min(100-barYTD,Math.round(deptAR/barBase*100));
+  const barPlanMark=planRub>0?Math.min(100,Math.round(planRub/barBase*100)):null;
+  const barYearMark=deptYearPlan>0?Math.min(100,Math.round(deptYearPlan/barBase*100)):null;
+
+  const vizRow=allOk&&(deptYTD+deptAR+deptRemain)>0?`
     <tr style="background:${B.white}">
-      <td colspan="8" style="padding:10px 12px 14px">
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div style="flex:1;min-width:200px">
-            <div style="display:flex;justify-content:space-between;font-size:10px;color:${B.textLight};margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
-              <span>Collection progress${planRub>0?" vs plan":""}</span>
-              <span>${collectedPct}%</span>
+      <td colspan="7" style="padding:10px 14px 14px">
+        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <div style="position:relative;height:14px;background:${B.border};border-radius:2px;overflow:visible;margin-bottom:8px">
+              <div style="height:100%;width:${barYTD}%;background:${B.green};border-radius:2px 0 0 2px;position:absolute"></div>
+              <div style="height:100%;width:${barAR}%;background:#c8a030;position:absolute;left:${barYTD}%"></div>
+              ${barPlanMark!==null?`<div style="position:absolute;top:-4px;left:${barPlanMark}%;width:2px;height:22px;background:#8b2a1f;opacity:0.7" title="Dept plan: ${fmtM(planRub)} M"></div>`:""}
+              ${barYearMark!==null&&barYearMark!==barPlanMark?`<div style="position:absolute;top:-4px;left:${barYearMark}%;width:2px;height:22px;background:#5B6770;opacity:0.6" title="Projects year plan: ${fmtM(deptYearPlan)} M"></div>`:""}
             </div>
-            <div style="height:12px;background:${B.border};border-radius:2px;overflow:hidden;display:flex">
-              <div style="width:${collectedPct}%;background:${B.green};transition:width .3s" title="Collected: ${fmtM(totalPaid)} M RUB"></div>
-              <div style="width:${arPctViz}%;background:#c8a030;transition:width .3s" title="AR: ${fmtM(totalAr)} M RUB"></div>
-            </div>
-            <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
-              <span style="font-size:10px;color:#1a6b50;display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${B.green};border-radius:1px;display:inline-block"></span>Collected ${fmtM(totalPaid)} M</span>
-              ${totalAr>0?`<span style="font-size:10px;color:#7a6020;display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#c8a030;border-radius:1px;display:inline-block"></span>AR ${fmtM(totalAr)} M</span>`:""}
-              <span style="font-size:10px;color:${B.textLight};display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${B.border};border-radius:1px;display:inline-block"></span>Outstanding ${fmtM(totalRemain)} M</span>
-              ${planRub>0?`<span style="font-size:10px;color:${B.textLight};display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:${B.gray25};border-radius:1px;display:inline-block"></span>Plan ${fmtM(planRub)} M</span>`:""}
+            <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:10px">
+              <span style="display:flex;align-items:center;gap:4px;color:#1a6b50"><span style="width:8px;height:8px;background:${B.green};border-radius:1px;display:inline-block"></span>YTD ${fmtM(deptYTD)} M</span>
+              ${deptAR>0?`<span style="display:flex;align-items:center;gap:4px;color:#7a6020"><span style="width:8px;height:8px;background:#c8a030;border-radius:1px;display:inline-block"></span>AR ${fmtM(deptAR)} M</span>`:""}
+              <span style="display:flex;align-items:center;gap:4px;color:${B.textLight}"><span style="width:8px;height:8px;background:${B.border};border-radius:1px;display:inline-block"></span>Outstanding ${fmtM(deptRemain)} M</span>
+              ${planRub>0?`<span style="display:flex;align-items:center;gap:4px;color:#8b2a1f"><span style="width:2px;height:10px;background:#8b2a1f;display:inline-block"></span>Dept plan ${fmtM(planRub)} M</span>`:""}
+              ${deptYearPlan>0?`<span style="display:flex;align-items:center;gap:4px;color:${B.textLight}"><span style="width:2px;height:10px;background:#5B6770;display:inline-block"></span>Projects plan ${fmtM(deptYearPlan)} M</span>`:""}
             </div>
           </div>
-          <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
-            <svg width="80" height="80" viewBox="0 0 80 80">
-              ${(()=>{
-                const r=34,cx=40,cy=40,total2=planRub>0?planRub:totalCv;
-                const paidA=Math.min(collectedPct/100*2*Math.PI,2*Math.PI-0.01);
-                const arA=Math.min((collectedPct+arPctViz)/100*2*Math.PI,2*Math.PI-0.01);
-                const arc=(start,end,color)=>{
-                  const x1=cx+r*Math.sin(start),y1=cy-r*Math.cos(start);
-                  const x2=cx+r*Math.sin(end),y2=cy-r*Math.cos(end);
-                  const large=end-start>Math.PI?1:0;
-                  return `<path d="M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} Z" fill="${color}"/>`;
-                };
-                const bg=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${B.border}"/>`;
-                const paid2=paidA>0?arc(0,paidA,B.green):"";
-                const ar2=arA>paidA?arc(paidA,arA,"#c8a030"):"";
-                const inner=`<circle cx="${cx}" cy="${cy}" r="22" fill="${B.white}"/>`;
-                const label=`<text x="${cx}" y="${cy-3}" text-anchor="middle" font-size="13" font-weight="700" font-family="Arial" fill="${B.text}">${collectedPct}%</text><text x="${cx}" y="${cy+10}" text-anchor="middle" font-size="8" font-family="Arial" fill="${B.textLight}">collected</text>`;
-                return bg+paid2+ar2+inner+label;
-              })()}
-            </svg>
+          <div style="display:flex;gap:16px">
+            ${deptPct!==null?`<div style="text-align:center"><div style="font-size:22px;font-weight:700;color:${deptPctColor}">${deptPct}%</div><div style="font-size:9px;color:${B.textLight};text-transform:uppercase;letter-spacing:.06em">of projects plan</div></div>`:""}
+            ${planPct!==null?`<div style="text-align:center"><div style="font-size:22px;font-weight:700;color:${planPctColor}">${planPct}%</div><div style="font-size:9px;color:${B.textLight};text-transform:uppercase;letter-spacing:.06em">of dept plan</div></div>`:""}
           </div>
         </div>
       </td>
-    </tr>` : "";
+    </tr>`:"";
 
-  const totalRow=`<tr style="background:${B.green15};border-top:2px solid ${B.green}">
-    <td colspan="3" style="padding:8px 12px;font-size:11px;color:${B.green};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Department total</td>
-    <td style="padding:8px 12px;font-size:13px;color:#1a6b50;font-weight:700;text-align:right">${allConverted?fmtM(totalPaid):"—"}</td>
-    <td style="padding:8px 12px;font-size:13px;color:#7a6020;font-weight:700;text-align:right">${allConverted?fmtM(totalAr):"—"}</td>
-    <td style="padding:8px 12px;font-size:13px;color:${B.text};font-weight:700;text-align:right">${allConverted?fmtM(totalRemain):"—"}</td>
-    <td style="padding:8px 12px;font-size:13px;color:${B.text};font-weight:700;text-align:right">${allConverted?fmtM(totalCv):"—"}</td>
-  </tr>
-  ${planRub>0&&allConverted?`<tr style="background:${B.gray15}">
-    <td colspan="3" style="padding:6px 12px;font-size:11px;color:${B.textLight}">Plan: <b style="color:${B.text}">${fmtM(planRub)} M RUB</b></td>
-    <td colspan="4" style="padding:6px 12px;font-size:11px;color:${B.textLight};text-align:right">
-      Collected <b style="color:#1a6b50">${Math.round(totalPaid/planRub*100)}%</b> of plan · Outstanding <b>${Math.round(totalRemain/planRub*100)}%</b> of plan
-    </td>
-  </tr>`:""}
-  ${vizHTML}`;
+  const totalRow=`
+    <tr style="background:${B.green15};border-top:2px solid ${B.green}">
+      <td colspan="2" style="padding:8px 12px;font-size:11px;color:${B.green};font-weight:700;letter-spacing:.06em;text-transform:uppercase">Department total</td>
+      <td style="padding:8px 12px;font-size:12px;text-align:right">
+        ${deptYearPlan>0?`<b style="color:${B.text}">${fmtM(deptYearPlan)}</b> M`:"—"}
+        ${planRub>0?`<div style="font-size:10px;color:${B.textLight}">dept plan: ${fmtM(planRub)} M</div>`:""}
+      </td>
+      <td style="padding:8px 12px;font-size:13px;color:#1a6b50;font-weight:700;text-align:right">${allOk?`${fmtM(deptYTD)} M`:"—"}</td>
+      <td style="padding:8px 12px;text-align:right">
+        ${deptPct!==null?`<span style="font-size:14px;font-weight:700;color:${deptPctColor}">${deptPct}%</span><span style="font-size:10px;color:${B.textLight};display:block">of projects plan</span>`:""}
+        ${planPct!==null?`<span style="font-size:13px;font-weight:700;color:${planPctColor}">${planPct}%</span><span style="font-size:10px;color:${B.textLight};display:block">of dept plan</span>`:""}
+      </td>
+      <td style="padding:8px 12px;font-size:13px;color:#7a6020;font-weight:700;text-align:right">${allOk?`${fmtM(deptAR)} M`:"—"}</td>
+      <td style="padding:8px 12px;font-size:13px;color:${B.textLight};font-weight:700;text-align:right">${allOk?`${fmtM(deptRemain)} M`:"—"}</td>
+    </tr>
+    ${vizRow}`;
 
   document.getElementById("summaryBlock").innerHTML=`
     <div style="background:${B.white};border:1px solid ${B.border};border-radius:4px;margin-bottom:24px;overflow:hidden">
@@ -212,7 +222,7 @@ function renderSummary() {
         <span style="font-size:12px;font-weight:700;color:${B.white};letter-spacing:.08em;text-transform:uppercase">Revenue Summary · M RUB</span>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:11px;color:rgba(255,255,255,0.7)">Plan (M RUB):</span>
+            <span style="font-size:11px;color:rgba(255,255,255,0.7)">Dept plan (M RUB):</span>
             <input type="number" placeholder="0.00" value="${summary.planRub||""}" style="width:80px;font-size:12px;background:rgba(255,255,255,0.15);border-color:rgba(255,255,255,0.3);color:${B.white}" onchange="window.setPlan(this.value)">
           </div>
           <div style="display:flex;gap:6px">
@@ -222,22 +232,22 @@ function renderSummary() {
         </div>
       </div>
       <div style="padding:14px 16px">
-        ${ratesHTML}
+        ${settingsHTML}
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="border-bottom:2px solid ${B.green}">
             <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Project</th>
             <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:center;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Status</th>
-            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Contract</th>
-            <th style="padding:8px 12px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Collected</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.text};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Year plan</th>
+            <th style="padding:8px 12px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Collected YTD</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.text};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">% of plan</th>
             <th style="padding:8px 12px;font-size:10px;color:#7a6020;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">AR</th>
             <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Outstanding</th>
-            <th style="padding:8px 12px;font-size:10px;color:${B.text};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Total RUB</th>
-            <th style="padding:8px 12px;font-size:10px;color:${B.text};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Year plan / %</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot>${totalRow}</tfoot>
         </table>
-        ${!allConverted?`<div style="font-size:10px;color:${B.gray50};margin-top:6px">* Some projects missing exchange rate — total may be incomplete</div>`:""}
+        ${!allOk?`<div style="font-size:10px;color:${B.gray50};margin-top:6px">* Some projects missing exchange rate</div>`:""}
+        ${!summary.fyStart?`<div style="font-size:10px;color:#7a6020;margin-top:4px">⚠ Set fiscal year dates above to enable YTD calculation</div>`:""}
       </div>
     </div>`;
 }
@@ -246,16 +256,18 @@ function renderSummary() {
 function financeHTML(p) {
   const {cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);
   if(!cv) return "";
+  const {collectedTotal,missingDate}=calcFinRub(p);
   const allocated=p.deliverables.reduce((s,d)=>s+num(d.amount),0);
   const diff=cv-allocated;
   const allocColor=Math.abs(diff)<0.01?"#1a6b50":diff<0?"#8b2a1f":"#7a6020";
-  const allocNote=Math.abs(diff)<0.01?"Deliverables match contract value":diff>0?`${p.currency} ${fmt(diff)} unallocated`:`${p.currency} ${fmt(Math.abs(diff))} over contract`;
+  const allocNote=Math.abs(diff)<0.01?"Match":diff>0?`${p.currency} ${fmt(diff)} unallocated`:`${p.currency} ${fmt(Math.abs(diff))} over`;
+  const missingWarn=missingDate>0?`<div style="font-size:10px;color:#8b2a1f;margin-top:4px">⚠ ${missingDate} paid deliverable(s) missing payment date — not counted in YTD</div>`:"";
   return `<div style="margin-bottom:14px;padding:12px 14px;background:${B.gray15};border-left:3px solid ${B.green};border-radius:2px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <span style="font-size:10px;color:${B.textLight};font-weight:700;letter-spacing:.08em;text-transform:uppercase">Contract finances</span>
       <span style="font-size:12px;font-weight:700;color:${B.text}">${p.currency} ${fmt(cv)}</span>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:5px 8px;background:${B.white};border-radius:2px;border:1px solid ${B.border}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:4px 8px;background:${B.white};border-radius:2px;border:1px solid ${B.border}">
       <span style="font-size:11px;color:${B.textLight}">Allocated:</span>
       <span style="font-size:11px;font-weight:600;color:${allocColor}">${p.currency} ${fmt(allocated)} — ${allocNote}</span>
     </div>
@@ -263,11 +275,12 @@ function financeHTML(p) {
       <div style="width:${paidPct}%;background:${B.green};transition:width .3s"></div>
       <div style="width:${arPctC}%;background:#c8a030;transition:width .3s"></div>
     </div>
-    <div style="display:flex;gap:14px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:${B.text}"><span style="width:8px;height:8px;border-radius:1px;background:${B.green};display:inline-block"></span><b>${paidPct}%</b>&nbsp;paid — ${p.currency} ${fmt(paid)}</div>
-      ${ar>0?`<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:${B.text}"><span style="width:8px;height:8px;border-radius:1px;background:#c8a030;display:inline-block"></span>AR: <b>${p.currency} ${fmt(ar)}</b> — ${arPctC}% of contract · ${arPctR}% of outstanding</div>`:""}
-      <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:${B.text}"><span style="width:8px;height:8px;border-radius:1px;background:${B.border};display:inline-block"></span>Outstanding: ${p.currency} ${fmt(remaining)}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:${B.text}">
+      <span><b>${paidPct}%</b> paid — ${p.currency} ${fmt(paid)}</span>
+      ${ar>0?`<span>AR: ${p.currency} ${fmt(ar)}</span>`:""}
+      <span style="color:${B.textLight}">Outstanding: ${p.currency} ${fmt(remaining)}</span>
     </div>
+    ${missingWarn}
   </div>`;
 }
 
@@ -283,19 +296,23 @@ function billingIcon(d) {
 function billingPanelHTML(d,pid) {
   const b=d.billing||emptyBilling();
   const cur=(getProject(pid)||{}).currency||"USD";
+  const currentRate=cur!=="RUB"?(summary.rates[cur]||""):"";
   const sentDays=daysSince(b.sentDate);
   const paidDays=(b.sentDate&&b.paidDate)?Math.floor((new Date(b.paidDate)-new Date(b.sentDate))/86400000):null;
   const terms=num((getProject(pid)||{}).paymentDays)||30;
   const warn=Math.round(terms*0.7);
   const unpaidChip=(!b.paid&&b.invoiceSent&&b.sentDate&&sentDays!==null)?
     (()=>{
-      const style=sentDays>terms?"background:#fdf0ef;color:#8b2a1f":sentDays>warn?"background:#fef9e7;color:#7a6020":"background:#e8f8f3;color:#1a6b50";
-      const hint=sentDays>terms?"Overdue — consider penalties":sentDays>warn?"Consider sending a reminder":"Within payment window";
-      return `<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;margin-left:4px;${style}">${sentDays}d</span>
-              <div style="font-size:11px;margin-left:22px;font-style:italic;margin-top:2px;color:${sentDays>terms?"#8b2a1f":sentDays>warn?"#7a6020":B.textLight}">${hint}</div>`;
+      const s=sentDays>terms?"background:#fdf0ef;color:#8b2a1f":sentDays>warn?"background:#fef9e7;color:#7a6020":"background:#e8f8f3;color:#1a6b50";
+      const h=sentDays>terms?"Overdue — consider penalties":sentDays>warn?"Consider sending a reminder":"Within payment window";
+      return `<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;${s}">${sentDays}d</span>
+              <div style="font-size:11px;font-style:italic;margin-top:2px;color:${sentDays>terms?"#8b2a1f":sentDays>warn?"#7a6020":B.textLight}">${h}</div>`;
     })():"";
   const paidChip=(b.paid&&paidDays!==null)?`<span style="font-size:11px;font-weight:600;border-radius:2px;padding:2px 8px;background:#e8f8f3;color:#1a6b50">Paid in ${paidDays}d</span>`:"";
   const paidBadge=b.paid?`<span style="font-size:11px;background:${B.green};color:${B.white};border-radius:2px;padding:2px 10px;font-weight:600">Paid</span>`:"";
+  const missingDateWarn=b.paid&&!b.paidDate?`<span style="font-size:11px;color:#8b2a1f;font-weight:600">⚠ Enter payment date for YTD tracking</span>`:"";
+  const inFYbadge=b.paid&&b.paidDate?(inFY(b.paidDate)?`<span style="font-size:10px;background:${B.green15};color:#1a6b50;border-radius:2px;padding:1px 6px">In FY</span>`:`<span style="font-size:10px;background:${B.gray15};color:${B.textLight};border-radius:2px;padding:1px 6px">Out of FY</span>`):"";
+
   return `<div class="billing-panel${d._open?" open":""}" id="bp_${d.id}">
     <div style="margin-top:8px;padding:10px 12px;background:${B.gray15};border:1px solid ${B.border};border-radius:2px">
       <div style="font-size:10px;color:${B.textLight};text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:8px">Billing</div>
@@ -303,29 +320,37 @@ function billingPanelHTML(d,pid) {
         <span style="white-space:nowrap">Amount (${cur})</span>
         <input type="number" style="width:120px" value="${d.amount||""}" placeholder="0" onchange="window.setDelAmount('${pid}','${d.id}',this.value)">
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:${B.text}"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:${B.text}">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.invoiceReady?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceReady',this.checked)"> Invoice prepared</label>
+      </div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px;color:${B.text};flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.invoiceSent?"checked":""} onchange="window.setBilling('${pid}','${d.id}','invoiceSent',this.checked)"> Invoice sent</label>
         ${b.invoiceSent?`<input type="text" value="${b.sentDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','sentDate',this.value)">`:""} ${unpaidChip}
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:${B.text}"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.clientFeedback?"checked":""} onchange="window.setBilling('${pid}','${d.id}','clientFeedback',this.checked)"> Client acknowledged</label></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:${B.text}">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.clientFeedback?"checked":""} onchange="window.setBilling('${pid}','${d.id}','clientFeedback',this.checked)"> Client acknowledged</label>
+      </div>
       <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:${B.text};flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${b.paid?"checked":""} onchange="window.setBilling('${pid}','${d.id}','paid',this.checked)">
           <span style="font-weight:${b.paid?700:400};color:${b.paid?B.green:B.text}">Payment received</span>
         </label>
-        ${b.paid?`<input type="text" value="${b.paidDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','paidDate',this.value)">`:""} ${paidChip} ${paidBadge}
+        ${b.paid?`<input type="text" value="${b.paidDate||""}" placeholder="2026-04-18" style="width:90px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','paidDate',this.value)">`:""} 
+        ${b.paid&&cur!=="RUB"?`<span style="font-size:11px;color:${B.textLight};white-space:nowrap">Rate:</span><input type="number" value="${b.paidRate||currentRate}" placeholder="${currentRate||"rate"}" style="width:70px;font-size:11px" onchange="window.setBilling('${pid}','${d.id}','paidRate',this.value)">`:""} 
+        ${paidChip} ${paidBadge} ${inFYbadge} ${missingDateWarn}
       </div>
     </div>
   </div>`;
 }
 
+// ── Deliverable ───────────────────────────────────────────────────────────────
 function deliverableHTML(d,pid) {
   const cur=getProject(pid).currency;
   const statusOpts=["Not started","In progress","Done"];
   const statusColor={"Not started":B.textLight,"In progress":"#185fa5","Done":"#1a6b50"};
   const statusBg={"Not started":B.gray15,"In progress":"#d8eaf5","Done":B.green25};
   const st=d.status||"Not started";
-  return `<div style="border:1px solid ${B.border};border-radius:2px;overflow:hidden;margin-bottom:6px">
+  const missingDate=d.billing?.paid&&!d.billing?.paidDate;
+  return `<div style="border:1px solid ${missingDate?"#d9534f":B.border};border-radius:2px;overflow:hidden;margin-bottom:6px">
     <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${d.done?B.green15:B.white};cursor:${d.done?"pointer":"default"}" onclick="window.toggleBilling('${pid}','${d.id}')">
       <input type="checkbox" ${d.done?"checked":""} onclick="event.stopPropagation();window.toggleDone('${pid}','${d.id}',this.checked)">
       <input type="text" value="${esc(d.name)}" placeholder="Deliverable name"
@@ -337,11 +362,8 @@ function deliverableHTML(d,pid) {
       </select>
       <input type="number" value="${d.amount||""}" placeholder="Amount" style="width:80px;font-size:11px;text-align:right" onchange="window.setDelAmount('${pid}','${d.id}',this.value)">
       <span style="font-size:11px;color:${B.textLight};white-space:nowrap">${cur}</span>
-      <label title="Include in this year's plan" style="display:flex;align-items:center;gap:3px;cursor:pointer;margin-left:4px">
-        <input type="checkbox" ${d.thisYear?"checked":""} onclick="event.stopPropagation();window.setDelThisYear('${pid}','${d.id}',this.checked)" style="accent-color:${B.green};width:12px;height:12px">
-        <span style="font-size:10px;color:${d.thisYear?B.green:B.gray50};font-weight:${d.thisYear?700:400};white-space:nowrap">${d.thisYear?"★ yr":"yr?"}</span>
-      </label>
       ${d.done?`<span style="font-size:11px">${billingIcon(d)||"💳"}</span><span style="font-size:11px;color:${B.textLight}">${d._open?"▲":"▼"}</span>`:""}
+      ${missingDate?`<span style="color:#d9534f;font-size:12px" title="Missing payment date">⚠</span>`:""}
       <button onclick="event.stopPropagation();window.removeDel('${pid}','${d.id}')" style="border:none;background:none;cursor:pointer;color:${B.gray50};font-size:16px;padding:0;line-height:1">×</button>
     </div>
     ${d.done?billingPanelHTML(d,pid):""}
@@ -376,23 +398,26 @@ function cardHTML(p) {
             style="font-size:12px;color:rgba(255,255,255,0.65);background:none;border:none;outline:none;width:100%;padding:0;margin-top:2px;font-family:Arial,sans-serif">
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <button onclick="window.cycleRag('${p.id}')" style="display:flex;align-items:center;gap:6px;background:${r.bg};color:${r.text};border:none;border-radius:2px;padding:4px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:Arial,sans-serif;letter-spacing:.04em">
+          <button onclick="window.cycleRag('${p.id}')" style="display:flex;align-items:center;gap:6px;background:${r.bg};color:${r.text};border:none;border-radius:2px;padding:4px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:Arial,sans-serif">
             <span style="width:7px;height:7px;border-radius:50%;background:${r.dot};display:inline-block"></span>${r.label}
           </button>
           <button onclick="window.removeProject('${p.id}')" style="border:none;background:none;cursor:pointer;color:rgba(255,255,255,0.5);font-size:18px;padding:0;line-height:1">×</button>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:11px;color:rgba(255,255,255,0.65)">Contract value:</span>
+        <span style="font-size:11px;color:rgba(255,255,255,0.65)">Contract:</span>
         <input type="text" value="${esc(p.currency)}" placeholder="USD" maxlength="5"
-          style="width:56px;font-size:12px;text-align:center;text-transform:uppercase;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+          style="width:52px;font-size:12px;text-align:center;text-transform:uppercase;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
           onchange="window.setField('${p.id}','currency',this.value.toUpperCase())">
-        <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:130px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+        <input type="number" placeholder="0" value="${p.contractValue||""}" style="width:110px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
           onchange="window.setField('${p.id}','contractValue',this.value)">
-        <span style="font-size:11px;color:rgba(255,255,255,0.65);margin-left:8px">Payment terms:</span>
-        <input type="number" placeholder="30" value="${p.paymentDays||""}" style="width:52px;font-size:12px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+        <span style="font-size:11px;color:rgba(255,255,255,0.65);margin-left:6px">Year plan (RUB M):</span>
+        <input type="number" placeholder="0.00" value="${p.yearPlanRub||""}" style="width:80px;font-size:12px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
+          onchange="window.setField('${p.id}','yearPlanRub',this.value)">
+        <span style="font-size:11px;color:rgba(255,255,255,0.65);margin-left:6px">Terms:</span>
+        <input type="number" placeholder="30" value="${p.paymentDays||""}" style="width:48px;font-size:12px;background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);color:${B.white}"
           onchange="window.setField('${p.id}','paymentDays',this.value)">
-        <span style="font-size:11px;color:rgba(255,255,255,0.65)">days</span>
+        <span style="font-size:11px;color:rgba(255,255,255,0.65)">d</span>
       </div>
     </div>
     <div style="padding:14px 16px">
@@ -400,9 +425,7 @@ function cardHTML(p) {
       ${deliverablesHTML(p)}
       <div style="margin-top:10px;padding-top:10px;border-top:1px dashed ${B.border}">
         <input type="file" accept=".txt,.pdf" id="fu_${p.id}" style="display:none" onchange="window.handleUpload('${p.id}',this)">
-        <button onclick="document.getElementById('fu_${p.id}').click()" style="font-size:12px;color:${B.textLight};background:${B.white};border:1px solid ${B.border};border-radius:2px;padding:5px 12px;cursor:pointer;font-family:Arial,sans-serif">
-          Upload deliverables (TXT or PDF) ↗
-        </button>
+        <button onclick="document.getElementById('fu_${p.id}').click()" style="font-size:12px;color:${B.textLight};background:${B.white};border:1px solid ${B.border};border-radius:2px;padding:5px 12px;cursor:pointer;font-family:Arial,sans-serif">Upload deliverables ↗</button>
         <div style="font-size:11px;color:#8b2a1f;margin-top:4px" id="uerr_${p.id}"></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px dashed ${B.border};align-items:center">
@@ -441,16 +464,17 @@ window.toggleBilling = (pid,did)=>{const p=getProject(pid);const d=p.deliverable
 window.setBilling    = (pid,did,f,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).billing[f]=v;});
 window.setDelAmount  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).amount=v;});
 window.setDelName    = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).name=v;});
-window.setDelThisYear = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).thisYear=v;});
+window.setDelStatus  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).status=v;});
 window.setPlan       = v=>{summary.planRub=v;saveSummary();renderSummary();};
 window.setRate       = (cur,v)=>{summary.rates[cur]=v;saveSummary();renderSummary();};
+window.setFY         = (part,v)=>{summary[part==="start"?"fyStart":"fyEnd"]=v;saveSummary();renderSummary();};
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 window.handleUpload=async(pid,input)=>{
   const file=input.files[0];if(!file)return;
   const errEl=document.getElementById("uerr_"+pid);
   const key=document.getElementById("apiKey").value.trim()||localStorage.getItem("green_api_key")||"";
-  if(!key){errEl.textContent="No API key entered above.";return;}
+  if(!key){errEl.textContent="No API key.";return;}
   localStorage.setItem("green_api_key",key);errEl.textContent="Parsing…";
   try{
     let messages;
@@ -461,67 +485,70 @@ window.handleUpload=async(pid,input)=>{
     const data=await res.json();
     if(data.error){errEl.textContent="API error: "+data.error.message;return;}
     const raw=data.content.map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
-    const parsed=JSON.parse(raw);
-    updateProject(pid,p=>parsed.forEach(name=>p.deliverables.push(emptyDel(name))));errEl.textContent="";
+    updateProject(pid,p=>JSON.parse(raw).forEach(name=>p.deliverables.push(emptyDel(name))));
+    errEl.textContent="";
   }catch(e){errEl.textContent="Error: "+e.message;}
   input.value="";
 };
 
-// ── Export PDF ────────────────────────────────────────────────────────────────
+// ── Export PDF (project) ──────────────────────────────────────────────────────
 window.exportPDF=pid=>{
-  const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);const r=RAG[p.rag];
-  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;const allocated=p.deliverables.reduce((s,d)=>s+num(d.amount),0);
+  const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC}=calcFin(p);const r=RAG[p.rag];
+  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;
   const rows=p.deliverables.map(d=>{
     const b=d.billing||emptyBilling();const days=daysSince(b.sentDate);const terms=num(p.paymentDays)||30;
-    const bStatus=b.paid?`Paid ${b.paidDate||""}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+    const bStatus=b.paid?`Paid ${b.paidDate||"⚠ no date"}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
     const bColor=b.paid?"#1a6b50":(b.invoiceSent&&days>terms)?"#8b2a1f":b.invoiceSent?"#7a6020":"#5B6770";
     const icon=b.paid?"💰":b.invoiceSent?"📤":b.invoiceReady?"📋":"";
-    const st=d.status||"Not started";const stColor=st==="Done"?"#1a6b50":st==="In progress"?"#185fa5":"#5B6770";const stBg=st==="Done"?"#e8f8f3":st==="In progress"?"#d8eaf5":"#eceef0";
-    return `<tr style="border-bottom:1px solid #d6d9db"><td style="padding:7px 10px;font-size:12px;color:${d.done?"#5B6770":"#2c2c2c"};text-decoration:${d.done?"line-through":"none"}">${d.name||"—"}</td>
-      <td style="padding:7px 10px;text-align:center"><span style="background:${stBg};color:${stColor};border-radius:2px;padding:2px 8px;font-size:10px;font-weight:700">${st}</span></td>
+    const st=d.status||"Not started";const stColor=st==="Done"?"#1a6b50":st==="In progress"?"#185fa5":"#5B6770";
+    const stBg=st==="Done"?"#e8f8f3":st==="In progress"?"#d8eaf5":"#eceef0";
+    const fyTag=b.paid&&b.paidDate?(inFY(b.paidDate)?'<span style="font-size:9px;background:#e5f6f2;color:#1a6b50;padding:1px 5px;border-radius:2px;margin-left:4px">In FY</span>':''):"";
+    return `<tr style="border-bottom:1px solid #d6d9db">
+      <td style="padding:7px 10px;font-size:12px;color:${d.done?"#5B6770":"#2c2c2c"};text-decoration:${d.done?"line-through":"none"}">${d.name||"—"}</td>
+      <td style="padding:7px 10px;text-align:center"><span style="background:${stBg};color:${stColor};font-size:10px;font-weight:700;padding:2px 8px;border-radius:2px">${st}</span></td>
       <td style="padding:7px 10px;font-size:12px;color:#5B6770;text-align:right">${d.amount?p.currency+" "+fmt(d.amount):"—"}</td>
-      <td style="padding:7px 10px;font-size:12px;color:${bColor}">${icon} ${bStatus}</td></tr>`;
+      <td style="padding:7px 10px;font-size:12px;color:${bColor}">${icon} ${bStatus}${fyTag}</td>
+    </tr>`;
   }).join("");
   const finBlock=cv?`<div style="margin-bottom:20px;padding:12px 14px;background:#eceef0;border-left:3px solid #34B78F">
-    <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:10px;color:#5B6770;text-transform:uppercase;font-weight:700;letter-spacing:.08em">Contract finances</span><span style="font-size:12px;font-weight:700">${p.currency} ${fmt(cv)}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:10px;color:#5B6770;text-transform:uppercase;font-weight:700">Contract finances</span><span style="font-size:12px;font-weight:700">${p.currency} ${fmt(cv)}</span></div>
     <div style="height:8px;background:#d6d9db;border-radius:1px;overflow:hidden;display:flex;margin-bottom:8px"><div style="width:${paidPct}%;background:#34B78F"></div><div style="width:${arPctC}%;background:#c8a030"></div></div>
-    <div style="font-size:11px;color:#2c2c2c;display:flex;flex-direction:column;gap:3px">
+    <div style="font-size:11px;color:#2c2c2c;display:flex;gap:16px;flex-wrap:wrap">
       <span><b>${paidPct}% paid</b> — ${p.currency} ${fmt(paid)}</span>
-      ${ar>0?`<span>AR: <b>${p.currency} ${fmt(ar)}</b> — ${arPctC}% of contract</span>`:""}
-      <span>Outstanding: ${p.currency} ${fmt(remaining)}</span>
-      <span>Allocated: ${p.currency} ${fmt(allocated)}</span>
+      ${ar>0?`<span>AR: ${p.currency} ${fmt(ar)}</span>`:""}
+      <span style="color:#5B6770">Outstanding: ${p.currency} ${fmt(remaining)}</span>
     </div></div>`:"";
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${p.name}</title>
   <style>body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#2c2c2c}@media print{body{padding:20px}}</style></head><body>
-  <div style="background:#5B6770;padding:16px 20px;margin-bottom:24px;border-bottom:3px solid #34B78F">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div><div style="font-size:20px;font-weight:700;color:#fff">${p.name||"Project"}</div><div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:2px">${p.client||""}</div></div>
-      <div style="background:${r.bg};color:${r.text};font-size:11px;font-weight:700;padding:5px 14px;border-radius:2px;letter-spacing:.06em;text-transform:uppercase">${r.label}</div>
-    </div>
+  <div style="background:#5B6770;padding:16px 20px;margin-bottom:24px;border-bottom:3px solid #34B78F;display:flex;justify-content:space-between;align-items:center">
+    <div><div style="font-size:20px;font-weight:700;color:#fff">${p.name||"Project"}</div><div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:2px">${p.client||""}</div></div>
+    <div style="background:${r.bg};color:${r.text};font-size:11px;font-weight:700;padding:5px 14px;border-radius:2px;text-transform:uppercase">${r.label}</div>
   </div>
   ${finBlock}
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-    <div style="font-size:10px;color:#5B6770;text-transform:uppercase;font-weight:700;letter-spacing:.08em">Deliverables</div>
-    <div style="font-size:11px;color:#5B6770">${done}/${total} completed</div>
+  <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+    <span style="font-size:10px;color:#5B6770;text-transform:uppercase;font-weight:700">Deliverables</span>
+    <span style="font-size:11px;color:#5B6770">${done}/${total} completed</span>
   </div>
   <table style="width:100%;border-collapse:collapse;border:1px solid #d6d9db">
-    <thead><tr style="background:#eceef0"><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Deliverable</th><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Status</th><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Amount</th><th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Billing</th></tr></thead>
+    <thead><tr style="background:#eceef0">
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;text-transform:uppercase">Deliverable</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:center;font-weight:700;text-transform:uppercase">Status</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;text-transform:uppercase">Amount</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;text-transform:uppercase">Billing</th>
+    </tr></thead>
     <tbody>${rows||'<tr><td colspan="4" style="padding:12px;font-size:12px;color:#adb3b7;font-style:italic">No deliverables</td></tr>'}</tbody>
   </table>
-  <div style="margin-top:16px;padding:8px 12px;background:#eceef0;font-size:11px;color:#5B6770"><b style="color:#2c2c2c">Billing:</b>&nbsp;&nbsp;📋 Invoice prepared &nbsp;·&nbsp; 📤 Invoice sent &nbsp;·&nbsp; 💰 Payment received</div>
-  <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #d6d9db;padding-top:12px">
-    <div style="font-size:10px;color:#adb3b7">GREEN Engineering & Consulting</div>
-    <div style="font-size:10px;color:#adb3b7">${new Date().toLocaleDateString("en-GB")}</div>
-  </div>
+  <div style="margin-top:12px;padding:8px 12px;background:#eceef0;font-size:11px;color:#5B6770"><b style="color:#2c2c2c">Billing:</b> 📋 Invoice prepared · 📤 Invoice sent · 💰 Payment received · <span style="background:#e5f6f2;color:#1a6b50;padding:1px 5px;border-radius:2px">In FY</span> = within fiscal year</div>
+  <div style="margin-top:12px;font-size:10px;color:#adb3b7;text-align:right">GREEN Engineering & Consulting · ${new Date().toLocaleDateString("en-GB")}</div>
   </body></html>`;
   const w=window.open("","_blank");w.document.write(html);w.document.close();w.focus();setTimeout(()=>w.print(),400);
 };
 
-// ── Export PPTX ───────────────────────────────────────────────────────────────
+// ── Export PPTX (project) ─────────────────────────────────────────────────────
 window.exportPPTX=pid=>{
-  const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC,arPctR}=calcFin(p);const r=RAG[p.rag];
+  const p=getProject(pid);const{cv,paid,ar,remaining,paidPct,arPctC}=calcFin(p);const r=RAG[p.rag];
   const ragHex=r.text.replace("#","");const ragBgHex=r.bg.replace("#","");
-  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;const allocated=p.deliverables.reduce((s,d)=>s+num(d.amount),0);
+  const done=p.deliverables.filter(d=>d.done).length;const total=p.deliverables.length;
   const prs=new PptxGenJS();prs.layout="LAYOUT_WIDE";const slide=prs.addSlide();slide.background={color:"ffffff"};
   slide.addShape(prs.ShapeType.rect,{x:0,y:0,w:"100%",h:1.2,fill:{color:"5B6770"}});
   slide.addShape(prs.ShapeType.rect,{x:0,y:1.15,w:"100%",h:0.05,fill:{color:"34B78F"}});
@@ -531,16 +558,16 @@ window.exportPPTX=pid=>{
   slide.addText(r.label.toUpperCase(),{x:8.2,y:0.3,w:1.6,h:0.35,fontSize:10,bold:true,color:ragHex,align:"center",valign:"middle",fontFace:"Arial"});
   let yOff=1.35;
   if(cv){
-    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:9.4,h:1.55,fill:{color:"ECEEF0"},line:{color:"D6D9DB",pt:0.5}});
-    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:0.04,h:1.55,fill:{color:"34B78F"}});
-    slide.addText("CONTRACT FINANCES",{x:0.55,y:yOff+0.1,w:5,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
-    slide.addText(`${p.currency} ${fmt(cv)}`,{x:6.5,y:yOff+0.1,w:3.1,h:0.22,fontSize:11,bold:true,color:"2C2C2C",align:"right",fontFace:"Arial"});
-    slide.addShape(prs.ShapeType.rect,{x:0.55,y:yOff+0.42,w:9.1,h:0.16,fill:{color:"D6D9DB"}});
-    if(paidPct>0)slide.addShape(prs.ShapeType.rect,{x:0.55,y:yOff+0.42,w:9.1*paidPct/100,h:0.16,fill:{color:"34B78F"}});
-    if(arPctC>0)slide.addShape(prs.ShapeType.rect,{x:0.55+9.1*paidPct/100,y:yOff+0.42,w:9.1*arPctC/100,h:0.16,fill:{color:"C8A030"}});
-    const fl=[`${paidPct}% paid — ${p.currency} ${fmt(paid)}`,ar>0?`AR: ${p.currency} ${fmt(ar)}`:null,`Outstanding: ${p.currency} ${fmt(remaining)}`,`Allocated: ${p.currency} ${fmt(allocated)}`].filter(Boolean).join("   |   ");
-    slide.addText(fl,{x:0.55,y:yOff+0.68,w:9.1,h:0.6,fontSize:9,color:"2C2C2C",wrap:true,fontFace:"Arial"});
-    yOff+=1.75;
+    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:9.4,h:1.4,fill:{color:"ECEEF0"},line:{color:"D6D9DB",pt:0.5}});
+    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:0.04,h:1.4,fill:{color:"34B78F"}});
+    slide.addText("CONTRACT FINANCES",{x:0.55,y:yOff+0.08,w:5,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
+    slide.addText(`${p.currency} ${fmt(cv)}`,{x:6.5,y:yOff+0.08,w:3.1,h:0.22,fontSize:11,bold:true,color:"2C2C2C",align:"right",fontFace:"Arial"});
+    slide.addShape(prs.ShapeType.rect,{x:0.55,y:yOff+0.38,w:9.1,h:0.14,fill:{color:"D6D9DB"}});
+    if(paidPct>0)slide.addShape(prs.ShapeType.rect,{x:0.55,y:yOff+0.38,w:9.1*paidPct/100,h:0.14,fill:{color:"34B78F"}});
+    if(arPctC>0)slide.addShape(prs.ShapeType.rect,{x:0.55+9.1*paidPct/100,y:yOff+0.38,w:9.1*arPctC/100,h:0.14,fill:{color:"C8A030"}});
+    const fl=[`${paidPct}% paid — ${p.currency} ${fmt(paid)}`,ar>0?`AR: ${p.currency} ${fmt(ar)}`:null,`Outstanding: ${p.currency} ${fmt(remaining)}`].filter(Boolean).join("   |   ");
+    slide.addText(fl,{x:0.55,y:yOff+0.6,w:9.1,h:0.6,fontSize:9,color:"2C2C2C",wrap:true,fontFace:"Arial"});
+    yOff+=1.6;
   }
   slide.addText("DELIVERABLES",{x:0.4,y:yOff,w:7,h:0.25,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
   slide.addText(`${done}/${total} completed`,{x:7.4,y:yOff,w:2.4,h:0.25,fontSize:9,color:"5B6770",align:"right",fontFace:"Arial"});
@@ -549,172 +576,137 @@ window.exportPPTX=pid=>{
     [{text:"Deliverable",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Amount",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Billing",options:{bold:true,color:"5B6770",fontFace:"Arial"}}],
     ...p.deliverables.map(d=>{
       const b=d.billing||emptyBilling();const days=daysSince(b.sentDate);
-      const bStatus=b.paid?`Paid ${b.paidDate||""}`:b.invoiceSent?`Sent ${b.sentDate||""} (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
-      const bColor=b.paid?"1A6B50":b.invoiceSent?"7A6020":"5B6770";const st=d.status||"Not started";const stColor=st==="Done"?"1A6B50":st==="In progress"?"185FA5":"5B6770";
+      const bStatus=b.paid?`Paid ${b.paidDate||"⚠"}${inFY(b.paidDate)?" [FY]":""}`:b.invoiceSent?`Sent (${days}d)`:b.invoiceReady?"Invoice ready":d.done?"No invoice":"—";
+      const bColor=b.paid?"1A6B50":b.invoiceSent?"7A6020":"5B6770";
+      const st=d.status||"Not started";const stColor=st==="Done"?"1A6B50":st==="In progress"?"185FA5":"5B6770";
       return [{text:d.name||"—",options:{color:d.done?"5B6770":"2C2C2C",strike:d.done,fontFace:"Arial"}},{text:st,options:{color:stColor,fontFace:"Arial"}},{text:d.amount?`${p.currency} ${fmt(d.amount)}`:"—",options:{color:"5B6770",fontFace:"Arial"}},{text:bStatus,options:{color:bColor,fontFace:"Arial"}}];
     })
   ];
   if(tRows.length>1)slide.addTable(tRows,{x:0.4,y:yOff,w:9.4,colW:[3.8,1.6,1.8,2.2],fill:{color:"FFFFFF"},border:{color:"D6D9DB",pt:0.5},fontSize:10,color:"2C2C2C",fontFace:"Arial"});
-  slide.addText("Billing: 📋 Invoice prepared  ·  📤 Invoice sent  ·  💰 Payment received",{x:0.4,y:6.6,w:9.4,h:0.25,fontSize:8,color:"5B6770",fontFace:"Arial"});
   slide.addText(`GREEN Engineering & Consulting · ${new Date().toLocaleDateString("en-GB")}`,{x:0.4,y:6.85,w:9.4,h:0.2,fontSize:8,color:"AABBBB",align:"right",fontFace:"Arial"});
   prs.writeFile({fileName:`${p.name||"project"}_status.pptx`});
 };
 
 // ── Export Summary PDF ────────────────────────────────────────────────────────
-window.exportSummaryPDF = () => {
-  const planRub = num(summary.planRub)*1000000;
-  let totalPaid=0,totalAr=0,totalRemain=0,totalCv=0,allConverted=true;
+window.exportSummaryPDF=()=>{
+  const planRub=num(summary.planRub)*1000000;
+  let deptYTD=0,deptYearPlan=0,deptAR=0,deptRemain=0,allOk=true;
   projects.forEach(p=>{
-    const {paidRub,arRub,remainRub,cvRub,hasRate}=calcFinRub(p);
-    if(!hasRate){allConverted=false;return;}
-    totalPaid+=paidRub; totalAr+=arRub; totalRemain+=remainRub; totalCv+=(cvRub||0);
+    const {collectedYTD,arRub,remainRub,hasRate}=calcFinRub(p);
+    if(!hasRate){allOk=false;return;}
+    deptYTD+=collectedYTD; deptAR+=arRub; deptRemain+=remainRub;
+    deptYearPlan+=num(p.yearPlanRub)*1000000;
   });
-
-  const rows = projects.map(p=>{
-    const {cv}=calcFin(p);
-    const {paidRub,arRub,remainRub,cvRub,hasRate}=calcFinRub(p);
-    const currentRate=getRate(p);
-    const yearPlan=p.deliverables.filter(d=>d.thisYear).reduce((s,d)=>s+num(d.amount)*currentRate,0);
-    const yearPct=yearPlan>0&&hasRate?Math.round(paidRub/yearPlan*100):null;
-    const yColor=yearPct===null?"#5B6770":yearPct>=70?"#1a6b50":yearPct>=40?"#7a6020":"#8b2a1f";
-    const r=RAG[p.rag];
+  const rows=projects.map(p=>{
+    const r=RAG[p.rag];const{collectedYTD,arRub,remainRub,hasRate}=calcFinRub(p);
+    const yearPlan=num(p.yearPlanRub)*1000000;
+    const ytdPct=yearPlan>0&&hasRate?Math.round(collectedYTD/yearPlan*100):null;
+    const pctColor=ytdPct===null?"#5B6770":ytdPct>=70?"#1a6b50":ytdPct>=40?"#7a6020":"#8b2a1f";
     return `<tr style="border-bottom:1px solid #d6d9db">
       <td style="padding:7px 10px;font-size:12px;font-weight:600">${p.name||"—"}</td>
       <td style="padding:7px 10px;text-align:center"><span style="background:${r.bg};color:${r.text};font-size:10px;font-weight:700;padding:2px 8px;border-radius:2px">${r.label}</span></td>
-      <td style="padding:7px 10px;font-size:11px;color:#5B6770;text-align:right">${p.currency} ${fmt(cv)}</td>
-      <td style="padding:7px 10px;font-size:12px;color:#1a6b50;font-weight:600;text-align:right">${hasRate?fmtM(paidRub):"—"}</td>
-      <td style="padding:7px 10px;font-size:12px;color:#7a6020;font-weight:600;text-align:right">${hasRate?fmtM(arRub):"—"}</td>
-      <td style="padding:7px 10px;font-size:12px;text-align:right">${hasRate?fmtM(remainRub):"—"}</td>
-      <td style="padding:7px 10px;font-size:12px;font-weight:600;text-align:right">${cvRub!==null?fmtM(cvRub):"—"}</td>
-      <td style="padding:7px 10px;font-size:12px;text-align:right">${yearPlan>0?`${fmtM(yearPlan)} M${yearPct!==null?`<br><b style="color:${yColor}">${yearPct}%</b>`:""}` :"—"}</td>
+      <td style="padding:7px 10px;font-size:12px;text-align:right">${yearPlan>0?`${fmtM(yearPlan)} M`:"—"}</td>
+      <td style="padding:7px 10px;font-size:12px;color:#1a6b50;font-weight:600;text-align:right">${hasRate?`${fmtM(collectedYTD)} M`:"—"}</td>
+      <td style="padding:7px 10px;font-size:13px;font-weight:700;text-align:right;color:${pctColor}">${ytdPct!==null?`${ytdPct}%`:"—"}</td>
+      <td style="padding:7px 10px;font-size:12px;color:#7a6020;text-align:right">${hasRate?`${fmtM(arRub)} M`:"—"}</td>
+      <td style="padding:7px 10px;font-size:12px;color:#5B6770;text-align:right">${hasRate?`${fmtM(remainRub)} M`:"—"}</td>
     </tr>`;
   }).join("");
-
-  const totRow = allConverted ? `<tr style="background:#eceef0;border-top:2px solid #34B78F">
-    <td colspan="3" style="padding:7px 10px;font-size:11px;font-weight:700;color:#34B78F;text-transform:uppercase;letter-spacing:.06em">Department total</td>
-    <td style="padding:7px 10px;font-size:13px;color:#1a6b50;font-weight:700;text-align:right">${fmtM(totalPaid)}</td>
-    <td style="padding:7px 10px;font-size:13px;color:#7a6020;font-weight:700;text-align:right">${fmtM(totalAr)}</td>
-    <td style="padding:7px 10px;font-size:13px;font-weight:700;text-align:right">${fmtM(totalRemain)}</td>
-    <td style="padding:7px 10px;font-size:13px;font-weight:700;text-align:right">${fmtM(totalCv)}</td>
-    <td style="padding:7px 10px;font-size:12px;text-align:right">${planRub>0?`Plan: ${fmtM(planRub)} M<br><b style="color:${Math.round(totalPaid/planRub*100)>=70?"#1a6b50":Math.round(totalPaid/planRub*100)>=40?"#7a6020":"#8b2a1f"}">${Math.round(totalPaid/planRub*100)}%</b>`:"—"}</td>
-  </tr>` : "";
-
+  const deptPct=deptYearPlan>0?Math.round(deptYTD/deptYearPlan*100):null;
+  const planPct=planRub>0?Math.round(deptYTD/planRub*100):null;
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Revenue Summary</title>
   <style>body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#2c2c2c}@media print{body{padding:20px}}</style></head><body>
   <div style="background:#5B6770;padding:14px 20px;margin-bottom:20px;border-bottom:3px solid #34B78F;display:flex;justify-content:space-between;align-items:center">
-    <div>
-      <div style="font-size:16px;font-weight:700;color:#fff">Revenue Summary · M RUB</div>
-      <div style="font-size:11px;color:rgba(255,255,255,0.65);margin-top:2px">GREEN Engineering & Consulting</div>
-    </div>
+    <div><div style="font-size:16px;font-weight:700;color:#fff">Revenue Summary · M RUB</div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.65);margin-top:2px">GREEN Engineering & Consulting${summary.fyStart?` · FY ${summary.fyStart} — ${summary.fyEnd}`:""}</div></div>
     <div style="font-size:11px;color:rgba(255,255,255,0.65)">${new Date().toLocaleDateString("en-GB")}</div>
   </div>
   <table style="width:100%;border-collapse:collapse;border:1px solid #d6d9db">
     <thead><tr style="background:#eceef0">
-      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Project</th>
-      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:center;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Status</th>
-      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Contract</th>
-      <th style="padding:7px 10px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Collected</th>
-      <th style="padding:7px 10px;font-size:10px;color:#7a6020;text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.06em">AR</th>
-      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Outstanding</th>
-      <th style="padding:7px 10px;font-size:10px;color:#2c2c2c;text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Total RUB</th>
-      <th style="padding:7px 10px;font-size:10px;color:#2c2c2c;text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Year plan / %</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:left;font-weight:700;text-transform:uppercase">Project</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:center;font-weight:700;text-transform:uppercase">Status</th>
+      <th style="padding:7px 10px;font-size:10px;color:#2c2c2c;text-align:right;font-weight:700;text-transform:uppercase">Year plan</th>
+      <th style="padding:7px 10px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;text-transform:uppercase">Collected YTD</th>
+      <th style="padding:7px 10px;font-size:10px;color:#2c2c2c;text-align:right;font-weight:700;text-transform:uppercase">% of plan</th>
+      <th style="padding:7px 10px;font-size:10px;color:#7a6020;text-align:right;font-weight:700;text-transform:uppercase">AR</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;text-transform:uppercase">Outstanding</th>
     </tr></thead>
     <tbody>${rows}</tbody>
-    <tfoot>${totRow}</tfoot>
+    <tfoot><tr style="background:#eceef0;border-top:2px solid #34B78F">
+      <td colspan="2" style="padding:7px 10px;font-size:11px;font-weight:700;color:#34B78F;text-transform:uppercase">Department total</td>
+      <td style="padding:7px 10px;font-size:12px;font-weight:700;text-align:right">${fmtM(deptYearPlan)} M${planRub>0?`<br><span style="font-size:10px;color:#5B6770">dept plan: ${fmtM(planRub)} M</span>`:""}</td>
+      <td style="padding:7px 10px;font-size:13px;color:#1a6b50;font-weight:700;text-align:right">${fmtM(deptYTD)} M</td>
+      <td style="padding:7px 10px;text-align:right">${deptPct!==null?`<b style="font-size:14px;color:${deptPct>=70?"#1a6b50":deptPct>=40?"#7a6020":"#8b2a1f"}">${deptPct}%</b><br><span style="font-size:9px;color:#5B6770">of projects plan</span>`:""}${planPct!==null?`<br><b style="font-size:13px;color:${planPct>=70?"#1a6b50":planPct>=40?"#7a6020":"#8b2a1f"}">${planPct}%</b><br><span style="font-size:9px;color:#5B6770">of dept plan</span>`:""}</td>
+      <td style="padding:7px 10px;font-size:13px;color:#7a6020;font-weight:700;text-align:right">${fmtM(deptAR)} M</td>
+      <td style="padding:7px 10px;font-size:13px;color:#5B6770;font-weight:700;text-align:right">${fmtM(deptRemain)} M</td>
+    </tr></tfoot>
   </table>
   <div style="margin-top:12px;font-size:10px;color:#adb3b7;text-align:right">GREEN Engineering & Consulting · ${new Date().toLocaleDateString("en-GB")}</div>
   </body></html>`;
-
-  const w=window.open("","_blank"); w.document.write(html); w.document.close(); w.focus(); setTimeout(()=>w.print(),400);
+  const w=window.open("","_blank");w.document.write(html);w.document.close();w.focus();setTimeout(()=>w.print(),400);
 };
 
 // ── Export Summary PPTX ───────────────────────────────────────────────────────
-window.exportSummaryPPTX = () => {
+window.exportSummaryPPTX=()=>{
   const planRub=num(summary.planRub)*1000000;
-  let totalPaid=0,totalAr=0,totalRemain=0,totalCv=0,allConverted=true;
+  let deptYTD=0,deptYearPlan=0,deptAR=0,deptRemain=0,allOk=true;
   projects.forEach(p=>{
-    const {paidRub,arRub,remainRub,cvRub,hasRate}=calcFinRub(p);
-    if(!hasRate){allConverted=false;return;}
-    totalPaid+=paidRub; totalAr+=arRub; totalRemain+=remainRub; totalCv+=(cvRub||0);
+    const {collectedYTD,arRub,remainRub,hasRate}=calcFinRub(p);
+    if(!hasRate){allOk=false;return;}
+    deptYTD+=collectedYTD; deptAR+=arRub; deptRemain+=remainRub;
+    deptYearPlan+=num(p.yearPlanRub)*1000000;
   });
-
-  const prs=new PptxGenJS(); prs.layout="LAYOUT_WIDE";
-  const slide=prs.addSlide(); slide.background={color:"ffffff"};
-
-  // Header
+  const prs=new PptxGenJS();prs.layout="LAYOUT_WIDE";
+  const slide=prs.addSlide();slide.background={color:"ffffff"};
   slide.addShape(prs.ShapeType.rect,{x:0,y:0,w:"100%",h:1.0,fill:{color:"5B6770"}});
   slide.addShape(prs.ShapeType.rect,{x:0,y:0.95,w:"100%",h:0.05,fill:{color:"34B78F"}});
-  slide.addText("Revenue Summary · M RUB",{x:0.4,y:0.18,w:7,h:0.4,fontSize:18,bold:true,color:"FFFFFF",fontFace:"Arial"});
-  slide.addText("GREEN Engineering & Consulting",{x:0.4,y:0.58,w:7,h:0.25,fontSize:11,color:"AABBBB",fontFace:"Arial"});
-  slide.addText(new Date().toLocaleDateString("en-GB"),{x:7.5,y:0.38,w:2.3,h:0.25,fontSize:11,color:"AABBBB",align:"right",fontFace:"Arial"});
-
-  // Plan vs collected bar
+  slide.addText("Revenue Summary · M RUB",{x:0.4,y:0.15,w:7.5,h:0.4,fontSize:18,bold:true,color:"FFFFFF",fontFace:"Arial"});
+  slide.addText(`GREEN Engineering & Consulting${summary.fyStart?` · FY ${summary.fyStart} — ${summary.fyEnd}`:""}`,{x:0.4,y:0.56,w:7.5,h:0.25,fontSize:10,color:"AABBBB",fontFace:"Arial"});
+  slide.addText(new Date().toLocaleDateString("en-GB"),{x:7.8,y:0.38,w:2,h:0.25,fontSize:10,color:"AABBBB",align:"right",fontFace:"Arial"});
   let yOff=1.15;
-  if(planRub>0&&allConverted){
-    const pct=Math.min(100,Math.round(totalPaid/planRub*100));
-    const arPct=Math.min(100-pct,Math.round(totalAr/planRub*100));
-    slide.addText("PLAN EXECUTION",{x:0.4,y:yOff,w:9.4,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
-    yOff+=0.25;
-    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:9.4,h:0.22,fill:{color:"D6D9DB"}});
-    if(pct>0) slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:9.4*pct/100,h:0.22,fill:{color:"34B78F"}});
-    if(arPct>0) slide.addShape(prs.ShapeType.rect,{x:0.4+9.4*pct/100,y:yOff,w:9.4*arPct/100,h:0.22,fill:{color:"C8A030"}});
-    yOff+=0.3;
-    slide.addText(`Collected ${fmtM(totalPaid)} M (${pct}%)   AR ${fmtM(totalAr)} M   Outstanding ${fmtM(totalRemain)} M   Plan ${fmtM(planRub)} M`,
-      {x:0.4,y:yOff,w:9.4,h:0.25,fontSize:9,color:"2C2C2C",fontFace:"Arial"});
-    yOff+=0.35;
+  // progress bar
+  if(allOk&&deptYTD>0){
+    const base=Math.max(planRub,deptYearPlan,deptYTD+deptAR+deptRemain,1);
+    const barYTD=Math.min(100,Math.round(deptYTD/base*100));
+    const barAR=Math.min(100-barYTD,Math.round(deptAR/base*100));
+    const deptPct=deptYearPlan>0?Math.round(deptYTD/deptYearPlan*100):null;
+    const planPct=planRub>0?Math.round(deptYTD/planRub*100):null;
+    slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:7.5,h:0.2,fill:{color:"D6D9DB"}});
+    if(barYTD>0)slide.addShape(prs.ShapeType.rect,{x:0.4,y:yOff,w:7.5*barYTD/100,h:0.2,fill:{color:"34B78F"}});
+    if(barAR>0)slide.addShape(prs.ShapeType.rect,{x:0.4+7.5*barYTD/100,y:yOff,w:7.5*barAR/100,h:0.2,fill:{color:"C8A030"}});
+    yOff+=0.28;
+    slide.addText(`YTD ${fmtM(deptYTD)} M   AR ${fmtM(deptAR)} M   Outstanding ${fmtM(deptRemain)} M`,{x:0.4,y:yOff,w:7.5,h:0.22,fontSize:9,color:"2C2C2C",fontFace:"Arial"});
+    if(deptPct!==null){slide.addText(`${deptPct}%`,{x:8.1,y:yOff-0.08,w:1.6,h:0.36,fontSize:24,bold:true,color:deptPct>=70?"1A6B50":deptPct>=40?"7A6020":"8B2A1F",align:"center",fontFace:"Arial"});}
+    if(planPct!==null){slide.addText(`${planPct}% of dept plan`,{x:8.0,y:yOff+0.28,w:1.8,h:0.22,fontSize:9,color:planPct>=70?"1A6B50":planPct>=40?"7A6020":"8B2A1F",align:"center",fontFace:"Arial"});}
+    yOff+=0.5;
   }
-
-  // Table
-  slide.addText("BY PROJECT",{x:0.4,y:yOff,w:9.4,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});
-  yOff+=0.28;
-
+  slide.addText("BY PROJECT",{x:0.4,y:yOff,w:9.4,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});yOff+=0.28;
   const tRows=[
-    [{text:"Project",options:{bold:true,color:"5B6770",fontFace:"Arial"}},
-     {text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"center"}},
-     {text:"Contract",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"right"}},
-     {text:"Collected",options:{bold:true,color:"1A6B50",fontFace:"Arial",align:"right"}},
-     {text:"AR",options:{bold:true,color:"7A6020",fontFace:"Arial",align:"right"}},
-     {text:"Outstanding",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"right"}},
-     {text:"Total RUB",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},
-     {text:"Year / %",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}}],
+    [{text:"Project",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"center"}},{text:"Year plan",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},{text:"Collected YTD",options:{bold:true,color:"1A6B50",fontFace:"Arial",align:"right"}},{text:"% of plan",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},{text:"AR",options:{bold:true,color:"7A6020",fontFace:"Arial",align:"right"}},{text:"Outstanding",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"right"}}],
     ...projects.map(p=>{
-      const {cv}=calcFin(p);
-      const {paidRub,arRub,remainRub,cvRub,hasRate}=calcFinRub(p);
-      const currentRate=getRate(p);
-      const yearPlan=p.deliverables.filter(d=>d.thisYear).reduce((s,d)=>s+num(d.amount)*currentRate,0);
-      const yearPct=yearPlan>0&&hasRate?Math.round(paidRub/yearPlan*100):null;
-      const yColor=yearPct===null?"5B6770":yearPct>=70?"1A6B50":yearPct>=40?"7A6020":"8B2A1F";
-      const r=RAG[p.rag];
+      const r=RAG[p.rag];const{collectedYTD,arRub,remainRub,hasRate}=calcFinRub(p);
+      const yearPlan=num(p.yearPlanRub)*1000000;
+      const ytdPct=yearPlan>0&&hasRate?Math.round(collectedYTD/yearPlan*100):null;
+      const pctColor=ytdPct===null?"5B6770":ytdPct>=70?"1A6B50":ytdPct>=40?"7A6020":"8B2A1F";
       return [
         {text:p.name||"—",options:{bold:true,color:"2C2C2C",fontFace:"Arial"}},
         {text:r.label.toUpperCase(),options:{color:r.text.replace("#",""),align:"center",fontFace:"Arial"}},
-        {text:`${p.currency} ${fmt(cv)}`,options:{color:"5B6770",align:"right",fontFace:"Arial"}},
-        {text:hasRate?`${fmtM(paidRub)} M`:"—",options:{bold:true,color:"1A6B50",align:"right",fontFace:"Arial"}},
+        {text:yearPlan>0?`${fmtM(yearPlan)} M`:"—",options:{color:"2C2C2C",align:"right",fontFace:"Arial"}},
+        {text:hasRate?`${fmtM(collectedYTD)} M`:"—",options:{bold:true,color:"1A6B50",align:"right",fontFace:"Arial"}},
+        {text:ytdPct!==null?`${ytdPct}%`:"—",options:{bold:ytdPct!==null,color:pctColor,align:"right",fontFace:"Arial"}},
         {text:hasRate?`${fmtM(arRub)} M`:"—",options:{color:"7A6020",align:"right",fontFace:"Arial"}},
         {text:hasRate?`${fmtM(remainRub)} M`:"—",options:{color:"5B6770",align:"right",fontFace:"Arial"}},
-        {text:cvRub!==null?`${fmtM(cvRub)} M`:"—",options:{bold:true,color:"2C2C2C",align:"right",fontFace:"Arial"}},
-        {text:yearPlan>0?`${fmtM(yearPlan)} M${yearPct!==null?" / "+yearPct+"%":""}`:"—",options:{bold:yearPct!==null,color:yColor,align:"right",fontFace:"Arial"}}
       ];
-    })
+    }),
+    [{text:"TOTAL",options:{bold:true,color:"34B78F",fontFace:"Arial"}},{text:"",options:{}},
+     {text:deptYearPlan>0?`${fmtM(deptYearPlan)} M`:"—",options:{bold:true,color:"2C2C2C",align:"right",fontFace:"Arial"}},
+     {text:`${fmtM(deptYTD)} M`,options:{bold:true,color:"1A6B50",align:"right",fontFace:"Arial"}},
+     {text:deptYearPlan>0?`${Math.round(deptYTD/deptYearPlan*100)}%`:"—",options:{bold:true,color:"34B78F",align:"right",fontFace:"Arial"}},
+     {text:`${fmtM(deptAR)} M`,options:{bold:true,color:"7A6020",align:"right",fontFace:"Arial"}},
+     {text:`${fmtM(deptRemain)} M`,options:{bold:true,color:"5B6770",align:"right",fontFace:"Arial"}}]
   ];
-
-  if(allConverted){
-    tRows.push([
-      {text:"TOTAL",options:{bold:true,color:"34B78F",fontFace:"Arial"}},
-      {text:"",options:{}},{text:"",options:{}},
-      {text:`${fmtM(totalPaid)} M`,options:{bold:true,color:"1A6B50",align:"right",fontFace:"Arial"}},
-      {text:`${fmtM(totalAr)} M`,options:{bold:true,color:"7A6020",align:"right",fontFace:"Arial"}},
-      {text:`${fmtM(totalRemain)} M`,options:{bold:true,color:"5B6770",align:"right",fontFace:"Arial"}},
-      {text:`${fmtM(totalCv)} M`,options:{bold:true,color:"2C2C2C",align:"right",fontFace:"Arial"}},
-      {text:planRub>0?`Plan ${fmtM(planRub)} M / ${Math.round(totalPaid/planRub*100)}%`:"",options:{bold:true,color:"34B78F",align:"right",fontFace:"Arial"}}
-    ]);
-  }
-
-  slide.addTable(tRows,{x:0.4,y:yOff,w:9.4,colW:[2.4,0.9,1.1,1.1,0.9,1.1,1.1,1.0],
-    fill:{color:"FFFFFF"},border:{color:"D6D9DB",pt:0.5},fontSize:10,color:"2C2C2C",fontFace:"Arial"});
-  slide.addText(`GREEN Engineering & Consulting · ${new Date().toLocaleDateString("en-GB")}`,
-    {x:0.4,y:6.85,w:9.4,h:0.2,fontSize:8,color:"AABBBB",align:"right",fontFace:"Arial"});
-
+  slide.addTable(tRows,{x:0.4,y:yOff,w:9.4,colW:[2.6,1.0,1.2,1.4,1.0,1.1,1.1],fill:{color:"FFFFFF"},border:{color:"D6D9DB",pt:0.5},fontSize:10,color:"2C2C2C",fontFace:"Arial"});
+  slide.addText(`GREEN Engineering & Consulting · ${new Date().toLocaleDateString("en-GB")}`,{x:0.4,y:6.85,w:9.4,h:0.2,fontSize:8,color:"AABBBB",align:"right",fontFace:"Arial"});
   prs.writeFile({fileName:`GREEN_revenue_summary_${new Date().toLocaleDateString("en-GB").replace(/\//g,"-")}.pptx`});
 };
 
@@ -729,7 +721,7 @@ onValue(dbRef,snapshot=>{
 });
 onValue(summaryRef,snapshot=>{
   const data=snapshot.val();
-  if(data)summary={planRub:data.planRub||"",rates:data.rates||{}};
+  if(data)summary={planRub:data.planRub||"",fyStart:data.fyStart||"",fyEnd:data.fyEnd||"",rates:data.rates||{}};
   renderSummary();
 });
 </script>
@@ -737,7 +729,7 @@ onValue(summaryRef,snapshot=>{
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
   body{font-family:Arial,sans-serif;background:#f5f6f7;color:#2c2c2c;padding:24px;min-height:100vh;}
   input[type=text],input[type=number],input[type=date],select{font-family:Arial,sans-serif;font-size:13px;color:#2c2c2c;background:#fff;border:1px solid #d6d9db;border-radius:2px;padding:3px 8px;outline:none;}
-  input[type=text]:focus,input[type=number]:focus,select:focus{border-color:#34B78F;}
+  input[type=text]:focus,input[type=number]:focus,input[type=date]:focus,select:focus{border-color:#34B78F;}
   input[type=checkbox]{accent-color:#34B78F;cursor:pointer;width:14px;height:14px;}
   .billing-panel{padding:0 10px 10px;display:none;}
   .billing-panel.open{display:block;}
@@ -746,10 +738,8 @@ onValue(summaryRef,snapshot=>{
 </head>
 <body>
 
-<!-- Header -->
 <div style="background:#5B6770;padding:14px 24px;margin:-24px -24px 24px;border-bottom:3px solid #34B78F;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
   <div style="display:flex;align-items:center;gap:16px">
-    <!-- Logo SVG -->
     <svg width="120" height="36" viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg">
       <polygon points="0,18 10,6 20,18 10,30" fill="#34B78F"/>
       <polygon points="12,18 22,6 32,18 22,30" fill="#34B78F" opacity="0.6"/>
@@ -767,11 +757,8 @@ onValue(summaryRef,snapshot=>{
   </div>
 </div>
 
-<!-- Legend -->
 <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-size:11px;color:#5B6770">
-  <span>📋 Invoice prepared</span>
-  <span>📤 Invoice sent</span>
-  <span>💰 Payment received</span>
+  <span>📋 Invoice prepared</span><span>📤 Invoice sent</span><span>💰 Payment received</span>
   <span style="color:#d6d9db">|</span>
   <span style="color:#1a6b50;font-weight:700">● On track</span>
   <span style="color:#7a6020;font-weight:700">● At risk</span>
@@ -779,12 +766,9 @@ onValue(summaryRef,snapshot=>{
 </div>
 
 <input type="hidden" id="apiKey">
-
 <div id="summaryBlock"></div>
-
 <div class="grid" id="grid"><div style="padding:2rem;color:#5B6770;font-size:14px">Connecting to Firebase…</div></div>
-
-<div style="margin-top:14px;font-size:11px;color:#adb3b7;text-align:right">Data synced via Firebase · All team members see the same board · Export per project: PDF / PPTX</div>
+<div style="margin-top:14px;font-size:11px;color:#adb3b7;text-align:right">Data synced via Firebase · Export per project: PDF / PPTX</div>
 
 </body>
 </html>
