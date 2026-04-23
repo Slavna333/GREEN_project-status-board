@@ -137,7 +137,6 @@ function renderSummary() {
     const r=RAG[p.rag];
     const {collectedYTD,arRub,remainRub,hasRate,missingDate}=calcFinRub(p);
     const yearPlan=num(p.yearPlanRub)*1000000;
-    const towardYearPlan=yearPlan>0?Math.max(0,yearPlan-collectedYTD-arRub):remainRub;
     const ytdPct=yearPlan>0&&hasRate?Math.min(999,Math.round(collectedYTD/yearPlan*100)):null;
     const pctColor=ytdPct===null?"":ytdPct>=100?"#1a6b50":ytdPct>=70?"#1a6b50":ytdPct>=40?"#7a6020":"#8b2a1f";
     const warn=missingDate>0?`<span title="${missingDate} paid deliverable(s) missing payment date — not counted in YTD" style="color:#8b2a1f;font-size:11px;margin-left:4px">⚠</span>`:"";
@@ -163,7 +162,7 @@ function renderSummary() {
         yearPlan>0&&!hasRate?`<span style="font-size:10px;color:${B.gray50}">no rate</span>`:`<span style="font-size:10px;color:${B.gray50}">—</span>`}
       </td>
       <td style="padding:8px 12px;font-size:12px;color:#7a6020;font-weight:500;text-align:right">${hasRate?`${fmtM(arRub)} M`:"—"}</td>
-      <td style="padding:8px 12px;font-size:12px;color:${B.textLight};text-align:right">${hasRate?`${fmtM(towardYearPlan)} M`:"—"}</td>
+      <td style="padding:8px 12px;font-size:12px;color:${B.textLight};text-align:right">${hasRate?`${fmtM(remainRub)} M`:"—"}</td>
     </tr>`;
   }).join("");
 
@@ -277,7 +276,7 @@ function renderSummary() {
             <th style="padding:8px 12px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Collected YTD</th>
             <th style="padding:8px 12px;font-size:10px;color:${B.text};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">% of plan</th>
             <th style="padding:8px 12px;font-size:10px;color:#7a6020;text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">AR</th>
-            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Outstanding</th>
+            <th style="padding:8px 12px;font-size:10px;color:${B.textLight};text-align:right;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Contract outstanding</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot>${totalRow}</tfoot>
@@ -668,7 +667,7 @@ window.exportSummaryPDF=()=>{
       <th style="padding:7px 10px;font-size:10px;color:#1a6b50;text-align:right;font-weight:700;text-transform:uppercase">Collected YTD</th>
       <th style="padding:7px 10px;font-size:10px;color:#2c2c2c;text-align:right;font-weight:700;text-transform:uppercase">% of plan</th>
       <th style="padding:7px 10px;font-size:10px;color:#7a6020;text-align:right;font-weight:700;text-transform:uppercase">AR</th>
-      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;text-transform:uppercase">Outstanding</th>
+      <th style="padding:7px 10px;font-size:10px;color:#5B6770;text-align:right;font-weight:700;text-transform:uppercase">Contract outstanding</th>
     </tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr style="background:#eceef0;border-top:2px solid #34B78F">
@@ -721,7 +720,7 @@ window.exportSummaryPPTX=()=>{
   }
   slide.addText("BY PROJECT",{x:0.4,y:yOff,w:9.4,h:0.22,fontSize:8,bold:true,color:"5B6770",charSpacing:1,fontFace:"Arial"});yOff+=0.28;
   const tRows=[
-    [{text:"Project",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"center"}},{text:"Year plan",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},{text:"Collected YTD",options:{bold:true,color:"1A6B50",fontFace:"Arial",align:"right"}},{text:"% of plan",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},{text:"AR",options:{bold:true,color:"7A6020",fontFace:"Arial",align:"right"}},{text:"Outstanding",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"right"}}],
+    [{text:"Project",options:{bold:true,color:"5B6770",fontFace:"Arial"}},{text:"Status",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"center"}},{text:"Year plan",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},{text:"Collected YTD",options:{bold:true,color:"1A6B50",fontFace:"Arial",align:"right"}},{text:"% of plan",options:{bold:true,color:"2C2C2C",fontFace:"Arial",align:"right"}},{text:"AR",options:{bold:true,color:"7A6020",fontFace:"Arial",align:"right"}},{text:"Contract outstanding",options:{bold:true,color:"5B6770",fontFace:"Arial",align:"right"}}],
     ...projects.map(p=>{
       const r=RAG[p.rag];const{collectedYTD,arRub,remainRub,hasRate}=calcFinRub(p);
       const yearPlan=num(p.yearPlanRub)*1000000;
