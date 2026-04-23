@@ -542,14 +542,6 @@ onValue(summaryRef,snapshot=>{
   <span style="color:#8b2a1f;font-weight:700">● Issues</span>
 </div>
 
-<!-- API bar -->
-<div style="background:#fef9e7;border:1px solid #e8d8a0;border-radius:2px;padding:10px 16px;margin-bottom:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-  <label style="font-size:12px;color:#7a6020;font-weight:700">API key (optional, for PDF parsing):</label>
-  <input type="password" id="apiKey" placeholder="sk-ant-…" style="flex:1;min-width:200px;font-family:monospace;font-size:12px">
-  <button onclick="localStorage.setItem('green_api_key',document.getElementById('apiKey').value.trim())" style="font-size:12px;color:#fff;background:#34B78F;border:none;border-radius:2px;padding:4px 14px;cursor:pointer;font-family:Arial,sans-serif;font-weight:700">Save</button>
-  <span style="font-size:11px;color:#5B6770">Stored locally in your browser only</span>
-</div>
-
 <div id="summaryBlock"></div>
 
 <div class="grid" id="grid"><div style="padding:2rem;color:#5B6770;font-size:14px">Connecting to Firebase…</div></div>
