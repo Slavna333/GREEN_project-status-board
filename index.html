@@ -166,13 +166,6 @@ function renderSummary() {
   const deptPctColor=deptPct===null?"":deptPct>=100?"#1a6b50":deptPct>=70?"#1a6b50":deptPct>=40?"#7a6020":"#8b2a1f";
   const planPctColor=planPct===null?"":planPct>=100?"#1a6b50":planPct>=70?"#1a6b50":planPct>=40?"#7a6020":"#8b2a1f";
 
-  // progress bar
-  const barBase=Math.max(planRub,deptYearPlan,deptYTD+deptAR+deptRemain,1);
-  const barYTD=Math.min(100,Math.round(deptYTD/barBase*100));
-  const barAR=Math.min(100-barYTD,Math.round(deptAR/barBase*100));
-  const barPlanMark=planRub>0?Math.min(100,Math.round(planRub/barBase*100)):null;
-  const barYearMark=deptYearPlan>0?Math.min(100,Math.round(deptYearPlan/barBase*100)):null;
-
   // доnut + progress bar vs dept plan
   const towardPlan = planRub > 0 ? Math.max(0, planRub - deptYTD - deptAR) : 0;
   const donutViz = planRub>0&&allOk ? (()=>{
@@ -492,8 +485,8 @@ window.addProject    = ()=>{projects.push(emptyProject());saveToFirebase();rende
 window.removeProject = pid=>{if(!confirm("Delete this project? This cannot be undone."))return;projects=projects.filter(p=>p.id!==pid);saveToFirebase();renderAll();};
 window.addDel        = pid=>updateProject(pid,p=>p.deliverables.push(emptyDel()));
 window.removeDel     = (pid,did)=>{if(!confirm("Delete this deliverable?"))return;updateProject(pid,p=>p.deliverables=p.deliverables.filter(d=>d.id!==did));};
-window.toggleDone    = (pid,did,val)=>updateProject(pid,p=>{const d=p.deliverables.find(d=>d.id===did);d.done=val;if(val)d._open=true;});
-window.toggleBilling = (pid,did)=>{const p=getProject(pid);const d=p.deliverables.find(d=>d.id===did);if(!d.done)return;d._open=!d._open;saveToFirebase();renderAll();};
+window.toggleBilling = (pid,did)=>{const p=getProject(pid);const d=p.deliverables.find(d=>d.id===did);if((d.status||"Not started")!=="Done")return;d._open=!d._open;saveToFirebase();renderAll();};
+window.setDelStatus  = (pid,did,v)=>updateProject(pid,p=>{const d=p.deliverables.find(d=>d.id===did);d.status=v;if(v==="Done")d._open=true;else d._open=false;});
 window.setBilling    = (pid,did,f,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).billing[f]=v;});
 window.setDelAmount  = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).amount=v;});
 window.setDelName    = (pid,did,v)=>updateProject(pid,p=>{p.deliverables.find(d=>d.id===did).name=v;});
